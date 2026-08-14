@@ -17,3 +17,12 @@ __pycache__/
 .DS_Store
 .playwright-cli/
 temp.md
+
+# 账号 Token 文件（等同账号凭据，禁止提交）
+tokens/
+
+# 本地工具记忆文件
+.workbuddy/
+
+# tokens 目录的本地副本（同样含账号凭据，禁止提交）
+tokens copy/
