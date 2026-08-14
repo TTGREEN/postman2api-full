@@ -3,3 +3,9 @@ tokens/
 
 # 注册流程运行时生成的验证消息等临时文件
 runtime/
+
+# 本地工具记忆文件
+.workbuddy/
+
+# tokens 目录的副本（同样含账号凭据，禁止提交）
+tokens copy/

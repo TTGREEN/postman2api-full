@@ -79,7 +79,7 @@ bun run start --count 5
 POSTMAN_COUNT=5 bun run start
 ```
 
-每一轮都使用新的 Camoufox 实例、新临时邮箱和随机密码。批量模式中单轮失败不会中断后续轮次；失败轮的浏览器会关闭，最后以汇总结果结束，存在失败时进程退出码为 `1`。
+每一轮都使用新的 BrowserContext、新临时邮箱和随机密码；批量模式复用同一个 Camoufox Browser 进程，避免轮次之间重复启动导致 `Failed to connect`。每轮结束后只关闭本轮 Context，所有轮次完成后统一关闭 Browser。单轮失败不会中断后续轮次，存在失败时进程退出码为 `1`。
 
 ### 本地演示
 
@@ -154,14 +154,16 @@ tokens/postman-token-YYYYMMDD-HHMMSS-SSS.json
 
 ### 批量模式
 
-当 `--count` 大于 `1` 时，失败轮会关闭浏览器并继续下一轮。请查看终端输出定位失败的阶段；如需观察页面现场，将相同配置改为单次有界面模式重试。
+当 `--count` 大于 `1` 时，每轮结束只关闭本轮 BrowserContext，并继续下一轮；如果检测到 Browser 传输层已经断开，才会关闭失效 Browser，并在下一轮重新启动。浏览器启动失败会自动重试，未捕获异常也会记录日志后跳过该轮，轮间有短暂停顿。请查看终端输出定位失败的阶段；如需观察页面现场，将相同配置改为单次有界面模式重试。
 
 ### 常见问题
 
 | 现象 | 建议处理 |
 | --- | --- |
-| Cloudflare 校验超时 | 使用有界面模式检查挑战页；必要时增大 `POSTMAN_CF_TIMEOUT`，确认网络和浏览器运行时正常。 |
+| 步骤等待超时 | 网络敏感的等待（页面加载、跨阶段跳转、Cloudflare）默认 10 分钟，页面内元素查找保持秒级快速失败（`src/config.ts` 的 `timeouts`）；如需调整可改这里。 |
+| Cloudflare 校验超时 | 使用有界面模式检查挑战页；必要时增大 `POSTMAN_CF_TIMEOUT`（默认 10 分钟），确认网络和浏览器运行时正常。 |
 | 未收到验证码邮件 | 脚本会自动轮询；若超时，稍后以新邮箱重新执行，或检查临时邮箱页面是否被拦截。 |
+| 提示「创建了太多的邮箱」 | temp-mail 按出口 IP 限流，与浏览器指纹无关（camoufox 每次启动都会换新指纹，但 IP 不变）。设置 `POSTMAN_PROXY="http://user:pass@host:port"` 走代理换 IP，或等待限流窗口过去。 |
 | 页面元素找不到 | 页面结构可能已变更。更新 `src/selectors/tempMail.ts` 或 `src/selectors/postman.ts` 中对应候选定位器。 |
 | Token 字段不完整 | 确认流程已进入 Postman 工作区并保持登录；使用有界面单次模式查看最终页面和会话状态。 |
 | Camoufox 无法启动 | 重新执行 `bunx camoufox-js fetch`，并确认当前环境支持浏览器图形或无界面运行。 |

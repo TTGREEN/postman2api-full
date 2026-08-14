@@ -23,7 +23,7 @@
       "framework": "bun",
       "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run-unit-tests.ps1"],
       "source_files": ["src/**/*.ts", "dashboard/src/**/*.ts", "dashboard/src/**/*.tsx"],
-      "test_files": ["tests/**/*.test.ts", "package.json", "scripts/run-unit-tests.ps1"],
+      "test_files": ["tests/**/*.test.ts", "tests/postman-register-logic.test.ts", "package.json", "scripts/run-unit-tests.ps1"],
       "depends_on_tests": []
     },
     {
@@ -46,9 +46,9 @@
     },
     {
       "test_id": "postman.register-demo",
-      "name": "Registration browser worker local smoke",
-      "framework": "node",
-      "command": ["C:\\Program Files\\nodejs\\node.exe", "--import", "tsx", "packages/postman-register/src/smoke.ts"],
+      "name": "Registration package offline typecheck",
+      "framework": "bun",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "x", "tsc", "--noEmit", "-p", "packages/postman-register/tsconfig.json"],
       "source_files": ["src/auth/**/*.ts", "scripts/postman-login-worker.ts", "packages/postman-register/src/**/*.ts"],
       "test_files": ["package.json", "packages/postman-register/package.json", "bun.lock"],
       "depends_on_tests": []
@@ -98,6 +98,8 @@
       "src/**/*.ts": ["postman.typecheck", "postman.unit-integration", "postman.stream"],
       "dashboard/src/**/*.tsx": ["postman.typecheck", "postman.dashboard-build"],
       "packages/postman-register/src/**/*.ts": ["postman.typecheck", "postman.register-demo"],
+      "packages/postman-register/src/selectors/postman.ts": ["postman.unit-integration", "postman.register-demo"],
+      "packages/postman-register/src/steps/verify.ts": ["postman.unit-integration", "postman.register-demo"],
       "src/auth/postman-login-runtime.ts": ["postman.unit-integration", "postman.register-demo"],
       "scripts/postman-login-worker.ts": ["postman.register-demo"],
       "scripts/camoufox-smoke.ts": ["postman.camoufox-smoke"],
