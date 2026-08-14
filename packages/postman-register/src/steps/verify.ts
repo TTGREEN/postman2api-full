@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { CONFIG } from "../config";
 import type { StepContext } from "../types";
 import { log } from "../core/logger";
-import { clickByText } from "../core/waiters";
+import { firstVisible } from "../core/waiters";
 import * as tm from "../selectors/tempMail";
 import * as ps from "../selectors/postman";
 
@@ -70,10 +70,12 @@ export async function runVerify(ctx: StepContext): Promise<void> {
   await tabs.navigate(emailTab, CONFIG.urls.tempMail);
   await sleep(1000);
 
-  // 直接从收件箱列表提取验证码；轮询等待邮件到达
+  // 直接从收件箱列表提取验证码；高频轮询等待邮件到达（2 秒一次，最长 3 分钟），
+  // 每 5 次刷新一次页面，防止 temp-mail 的推送连接断开后永远看不到新邮件
   let code: string | null = null;
   let lastList = "";
-  for (let attempt = 1; attempt <= 6 && !code; attempt++) {
+  const pollDeadline = Date.now() + 180000;
+  for (let attempt = 1; Date.now() < pollDeadline && !code; attempt++) {
     await tm.waitForInboxLoaded(emailTab);
     lastList = await tm.readInboxListText(emailTab);
 
@@ -82,14 +84,19 @@ export async function runVerify(ctx: StepContext): Promise<void> {
     const distinctCodes = [...new Set(labeledRaw.map((m) => m.replace(/[^\d]/g, "").slice(-6)))];
     if (distinctCodes.length > 1) {
       log.warn(`第 ${attempt} 次：收件箱列表含多个不同验证码（${distinctCodes.join(" / ")}），可能残留旧数据，不猜测`);
-      if (attempt < 6) await sleep(4000);
-      continue;
+    } else {
+      code = extractCodeFromListText(lastList);
+      if (!code) {
+        log.warn(`第 ${attempt} 次未提取到验证码（列表 ${lastList.trim().length} 字符，邮件可能尚未到达）`);
+      }
     }
 
-    code = extractCodeFromListText(lastList);
     if (!code) {
-      log.warn(`第 ${attempt} 次未提取到验证码（列表 ${lastList.trim().length} 字符，邮件可能尚未到达）`);
-      if (attempt < 6) await sleep(4000);
+      await sleep(2000);
+      if (attempt % 5 === 0) {
+        log.info("刷新收件箱页面，重新建立邮件推送连接");
+        await tabs.navigate(emailTab, CONFIG.urls.tempMail).catch(() => {});
+      }
     }
   }
   if (!code) {
@@ -117,15 +124,24 @@ export async function runVerify(ctx: StepContext): Promise<void> {
 
   log.info(`在标签页填充验证码，当前 URL: ${tab.url()}`);
   await ps.fillOtp(tab, code, CONFIG.timeouts.long);
-  await clickByText(tab, /^Verify Account$|^Verify$/i, { timeout: CONFIG.timeouts.short }).catch(() =>
-    log.info("验证按钮已不可见（可能已自动提交）"),
-  );
-  log.info("已提交验证码，等待跳转到新手引导……");
 
-  // 提交后可能还会触发一次 Cloudflare 挑战（组件由提交触发，提交前页面上没有）：
-  // 同样走循环等待 + 跨 frame 点击；页面上没有组件时函数会自动跳过
-  await ps.waitForCloudflareSuccess(tab, CONFIG.timeouts.cfWait, () => ps.verificationPageReady(tab));
-  log.ok("验证提交后的 CAPTCHA 状态已确认");
+  // 有些版本 6 位填完会自动提交，按钮随之消失；按钮还在就正常点击。
+  // 区分「按钮不存在（已自动提交）」与「点击失败（必须抛错）」，不再吞掉点击异常。
+  const verifyButton = await firstVisible(
+    [tab.getByRole("button", { name: /^Verify Account$|^Verify$/i }).first()],
+    CONFIG.timeouts.short,
+  );
+  if (verifyButton) {
+    await verifyButton.click();
+    log.info("已点击验证按钮，提交验证码");
+  } else {
+    log.info("验证按钮已不可见（已自动提交）");
+  }
+
+  // 提交后可能触发一次新的 Turnstile 挑战（组件由提交触发，提交前页面上没有）：
+  // 给组件一个出现窗口，出现则自动点击并等待通过；没出现则直接跳过。
+  // 期间检测到验证码错误 / CAPTCHA 失败会立即抛错，不再干等超时。
+  await ps.waitForPostSubmitChallenge(tab);
 
   await ps.waitForOnboarding(tab);
   log.ok("邮箱验证通过，已进入新手引导页面");

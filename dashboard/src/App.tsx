@@ -28,10 +28,17 @@ interface LoginLogEntry {
 
 const STATUS_LABEL: Record<string, string> = {
   active: "正常",
-  exhausted: "额度耗尽",
+  exhausted: "耗尽",
   error: "错误",
   cooling: "请求受限",
+  disabled: "禁用",
 };
+
+function getAccountDisplayStatus(a: Account): { status: string; label: string } {
+  if (!a.enabled) return { status: "disabled", label: STATUS_LABEL.disabled };
+  if (a.status === "exhausted") return { status: "exhausted", label: STATUS_LABEL.exhausted };
+  return { status: "active", label: STATUS_LABEL.active };
+}
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("accounts");
@@ -226,6 +233,7 @@ function AccountsTab({
   const [testing, setTesting] = useState<Set<number>>(new Set());
   const [testResults, setTestResults] = useState<Record<number, AccountTestResult>>({});
   const [testLogResult, setTestLogResult] = useState<AccountTestResult | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const wsRef = useRef<WebSocket | null>(null);
 
   const load = useCallback(
@@ -233,6 +241,12 @@ function AccountsTab({
       try {
         const res = await fetchAccounts();
         setAccounts(res.data);
+        setSelected((prev) => {
+          if (prev.size === 0) return prev;
+          const ids = new Set(res.data.map((account) => account.id));
+          const next = new Set([...prev].filter((id) => ids.has(id)));
+          return next.size === prev.size ? prev : next;
+        });
       } catch (e: any) {
         if (!silent) showToast("加载失败：" + e.message, "error");
       } finally {
@@ -371,6 +385,107 @@ function AccountsTab({
     }
   };
 
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      if (prev.size === filtered.length && filtered.length > 0) return new Set<number>();
+      return new Set(filtered.map((a) => a.id));
+    });
+  };
+
+  const isAllSelected = filtered.length > 0 && filtered.every((a) => selected.has(a.id));
+  const batchBusy = selected.size > 0 && [...selected].some((id) => warming.has(id) || testing.has(id));
+
+  const doBatchWarmup = async () => {
+    const ids = [...selected].filter((id) => !warming.has(id) && !testing.has(id));
+    if (ids.length === 0) return;
+    setWarming((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.add(id));
+      return n;
+    });
+    let ok = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        const res = await warmupAccount(id);
+        setAccounts((current) => current.map((account) => account.id === id ? res.account : account));
+        if (res.success) ok++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    setWarming((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.delete(id));
+      return n;
+    });
+    showToast(ids.length === 1
+      ? (failed === 0 ? "额度刷新成功" : "额度刷新失败")
+      : `批量刷新完成：成功 ${ok}，失败 ${failed}`, failed === 0 ? "success" : "error");
+  };
+
+  const doBatchTest = async () => {
+    const ids = [...selected].filter((id) => !warming.has(id) && !testing.has(id));
+    if (ids.length === 0) return;
+    setTesting((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.add(id));
+      return n;
+    });
+    let ok = 0;
+    let failed = 0;
+    setTestLogResult(null);
+    for (const id of ids) {
+      try {
+        const result = await testAccount(id);
+        setTestResults((results) => ({ ...results, [id]: result }));
+        if (result.available) ok++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    const latest = await fetchAccounts();
+    setAccounts(latest.data);
+    setTesting((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.delete(id));
+      return n;
+    });
+    showToast(ids.length === 1
+      ? (failed === 0 ? "账号实际问答可用" : "账号不可用")
+      : `批量测试完成：可用 ${ok}，不可用 ${failed}`, failed === 0 ? "success" : "error");
+  };
+
+  const doBatchDelete = async () => {
+    const ids = [...selected];
+    let ok = 0;
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await deleteAccount(id);
+        ok++;
+      } catch {
+        failed++;
+      }
+    }
+    setSelected(new Set());
+    showToast(ids.length === 1
+      ? (failed === 0 ? "已删除" : "删除失败")
+      : `批量删除完成：成功 ${ok}，失败 ${failed}`, failed === 0 ? "success" : "error");
+    load();
+  };
+
   return (
     <>
       <div className="page-hd">
@@ -444,7 +559,7 @@ function AccountsTab({
             </span>
           </div>
           <div className="stat-num" style={{ color: "#4c9168" }}>
-            {isTotalQuotaKnown ? fmt(totalQuotaRemaining) : "未知"}
+            {isTotalQuotaKnown ? fmtQuota(totalQuotaRemaining) : "未知"}
           </div>
         </div>
         <div className="stat-cell">
@@ -478,10 +593,47 @@ function AccountsTab({
         ))}
       </div>
 
+      {selected.size > 0 && (
+        <div className="batch-bar">
+          <span className="batch-bar-info">
+            已选 <span className="batch-bar-count">{selected.size}</span> 个账号
+          </span>
+          <div className="batch-bar-actions">
+            <button className="batch-bar-btn" disabled={batchBusy} onClick={doBatchWarmup}>
+              <svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none"><path d="M20 11a8 8 0 0 0-14.6-4.6" /><path d="M4 4v5h5" /><path d="M4 13a8 8 0 0 0 14.6 4.6" /><path d="M20 20v-5h-5" /></svg>
+              批量刷新额度
+            </button>
+            <button className="batch-bar-btn" disabled={batchBusy} onClick={doBatchTest}>
+              <svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none"><path d="M5 12.5 9.2 17 19 7" /></svg>
+              批量测试
+            </button>
+            <button
+              className="batch-bar-btn batch-bar-btn-danger"
+              disabled={batchBusy}
+              onClick={() => setConfirm({
+                msg: `确定删除选中的 ${selected.size} 个账号吗？此操作无法撤销。`,
+                action: doBatchDelete,
+              })}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" fill="none">
+                <path d="M5 7h14" /><path d="M9 7V4h6v3" /><path d="M8 10v7" /><path d="M12 10v7" /><path d="M16 10v7" /><path d="M7 7l1 13h8l1-13" />
+              </svg>
+              批量删除
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="table-card">
         <table>
           <thead>
             <tr>
+              <th style={{ width: 44 }}>
+                <label className="checkbox-label">
+                  <input type="checkbox" className="checkbox-input" checked={isAllSelected} onChange={toggleSelectAll} />
+                  <span className="checkbox-box" />
+                </label>
+              </th>
               <th>邮箱</th>
               <th className="table-center" style={{ width: 80 }}>状态</th>
               <th style={{ minWidth: 200 }}>额度</th>
@@ -491,17 +643,28 @@ function AccountsTab({
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="empty-state">加载中...</td></tr>
+              <tr><td colSpan={6} className="empty-state">加载中...</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={5} className="empty-state">暂无账号，请点击右上角“添加账号”。</td></tr>
+              <tr><td colSpan={6} className="empty-state">暂无账号，请点击右上角“添加账号”。</td></tr>
             ) : (
               filtered.map((a) => {
-                const isDisabled = !a.enabled;
+                const displayStatus = getAccountDisplayStatus(a);
                 const isWarming = warming.has(a.id);
                 const isTesting = testing.has(a.id);
                 const testResult = testResults[a.id];
                 return (
                   <tr key={a.id}>
+                    <td>
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          className="checkbox-input"
+                          checked={selected.has(a.id)}
+                          onChange={() => toggleSelect(a.id)}
+                        />
+                        <span className="checkbox-box" />
+                      </label>
+                    </td>
                     <td>
                       <span className="tok">{a.email}</span>
                       {a.errorMessage && (
@@ -509,12 +672,9 @@ function AccountsTab({
                       )}
                     </td>
                     <td className="table-center">
-                      <span className={`badge badge-${a.status === "active" ? "active" : a.status}`}>
-                        {STATUS_LABEL[a.status] || a.status}
+                      <span className={`badge badge-${displayStatus.status}`}>
+                        {displayStatus.label}
                       </span>
-                      {isDisabled && (
-                        <span className="badge badge-disabled" style={{ marginLeft: 4 }}>已禁用</span>
-                      )}
                     </td>
                     <td>{quotaCell(a)}</td>
                     <td style={{ fontSize: 12, color: "#9a9a9a" }}>{fmtDate(a.lastUsedAt)}</td>
@@ -633,8 +793,32 @@ function AddAccountModal({
   const [tokens, setTokens] = useState("");
   const [loading, setLoading] = useState(false);
   const [importResult, setImportResult] = useState<AccountImportResponse | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [confirmationId, setConfirmationId] = useState<string | null>(null);
   const [confirmationState, setConfirmationState] = useState<"idle" | "sending" | "sent">("idle");
+
+  const handleFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files || []);
+    if (picked.length === 0) return;
+    setSelectedFiles((prev) => {
+      const names = new Set(prev.map((f) => f.name));
+      const merged = [...prev];
+      for (const f of picked) {
+        if (!names.has(f.name)) {
+          merged.push(f);
+          names.add(f.name);
+        }
+      }
+      return merged;
+    });
+    setImportResult(null);
+    e.target.value = "";
+  };
+
+  const removeFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setImportResult(null);
+  };
 
   const confirmRegistration = async () => {
     if (!confirmationId || confirmationState !== "idle") return;
@@ -647,6 +831,28 @@ function AddAccountModal({
       setConfirmationState("idle");
       showToast("完成确认失败：" + e.message, "error");
     }
+  };
+
+  const readTokenFiles = async (): Promise<unknown[]> => {
+    const records: unknown[] = [];
+    for (const file of selectedFiles) {
+      let text: string;
+      try {
+        text = await file.text();
+      } catch (e: any) {
+        throw new Error(`读取文件 ${file.name} 失败：${e.message}`);
+      }
+      let parsed: any;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error(`文件 ${file.name} 不是合法的 JSON`);
+      }
+      if (parsed && Array.isArray(parsed.accounts)) records.push(...parsed.accounts);
+      else if (parsed && typeof parsed === "object") records.push(parsed);
+      else throw new Error(`文件 ${file.name} 内容格式不正确`);
+    }
+    return records;
   };
 
   const submit = async () => {
@@ -666,8 +872,18 @@ function AddAccountModal({
         );
         showToast(isSignup ? "注册完成，账号已自动导入账号池" : "浏览器登录完成，账号已添加", "success");
       } else {
-        const parsed = JSON.parse(tokens);
-        const result = await importAccounts(parsed);
+        let payload: unknown;
+        if (selectedFiles.length > 0) {
+          payload = { version: 1, accounts: await readTokenFiles() };
+        } else {
+          try {
+            payload = JSON.parse(tokens);
+          } catch {
+            showToast("粘贴内容不是合法的 JSON", "error");
+            return;
+          }
+        }
+        const result = await importAccounts(payload);
         setImportResult(result);
         onRefresh();
         const summary = `创建 ${result.summary.created}，更新 ${result.summary.updated}，失败 ${result.summary.failed}`;
@@ -761,8 +977,40 @@ function AddAccountModal({
             </div>
           ) : (
             <div className="import-section">
+              <div className="import-files-wrap">
+                <label className="import-file-picker">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  选择 Token 文件（可多选）
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    multiple
+                    className="import-file-input"
+                    onChange={handleFilesChange}
+                  />
+                </label>
+                {selectedFiles.length > 0 && (
+                  <div className="import-file-list">
+                    {selectedFiles.map((file, i) => (
+                      <span className="import-file-chip" key={`${file.name}-${i}`}>
+                        <span>{file.name}</span>
+                        <button type="button" className="import-file-remove" onClick={() => removeFile(i)} title="移除">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="dialog-help">
-                粘贴版本化账号 JSON。支持批量导入；相同邮箱会更新 Token，不会重复创建。
+                粘贴版本化账号 JSON，或选择多个 Token 文件批量导入。相同邮箱会更新 Token，不会重复创建。
               </div>
               <textarea
                 className="input import-textarea"
@@ -808,7 +1056,7 @@ function AddAccountModal({
           <button className="dialog-btn" disabled={loading} onClick={onClose}>{mode === "import" && importResult ? "完成" : "取消"}</button>
           <button
             className="dialog-btn dialog-btn-primary"
-            disabled={loading || (mode === "import" ? !tokens.trim() : !email.trim()) || (mode === "automated" && password.length < 8)}
+            disabled={loading || (mode === "import" ? (!tokens.trim() && selectedFiles.length === 0) : !email.trim()) || (mode === "automated" && password.length < 8)}
             onClick={submit}
           >
             {loading
@@ -824,7 +1072,6 @@ function AddAccountModal({
 function quotaCell(a: Account) {
   const limit = a.quotaLimit || 0;
   const remaining = a.quotaRemaining || 0;
-  const used = limit - remaining;
   const pct = limit > 0 ? Math.max(0, Math.min(100, Math.round((remaining / limit) * 100))) : 0;
   const color = pct <= 0 ? "#c9c9cf" : pct < 15 ? "#b0632a" : "#4c9168";
 
@@ -835,7 +1082,7 @@ function quotaCell(a: Account) {
       <div className="quota-row">
         <span className="quota-row-name">AI 点数</span>
         <span className="quota-row-track"><span className="quota-row-fill" style={{ width: `${pct}%`, background: color }}></span></span>
-        <span className="quota-row-val">{fmt(remaining)} / {fmt(limit)}</span>
+        <span className="quota-row-val">{fmtQuota(remaining)} / {fmtQuota(limit)}</span>
       </div>
     </div>
   );
@@ -1084,6 +1331,10 @@ function SettingsTab({ showToast }: { showToast: (msg: string, type?: "success" 
 function fmt(n: number): string {
   n = Number(n) || 0;
   return n >= 10000 ? (n / 1000).toFixed(1) + "k" : String(n);
+}
+
+function fmtQuota(n: number): string {
+  return (Number(n) || 0).toFixed(2);
 }
 
 function fmtDate(d?: string | null): string {

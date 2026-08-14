@@ -43,29 +43,36 @@ export async function runTempEmail(ctx: StepContext): Promise<void> {
   const items = await snapshot(tab);
   log.info(`take_snapshot 发现 ${items.length} 个可见交互元素`);
 
-  // 2. 无条件删除并重新生成一次，确保收件箱全新。
-  //    temp-mail 会按 IP 沿用上次的地址，不重生的话上一轮的旧邮件会残留，导致验证码取错。
+  // 2. 仅当收件箱残留上一轮的老验证码 / Postman 邮件时才删除并重新生成；
+  //    收件箱干净时直接使用当前邮箱，避免无谓的删除点击。
+  await tm.waitForInboxLoaded(tab);
   let email: string;
-  try {
-    email = await tm.regenerateEmail(tab, initialEmail);
-    // 确认新邮箱收件箱干净
-    await retry(
-      async () => {
-        await tm.waitForInboxLoaded(tab);
-        if (await tm.hasPostmanEmail(tab)) throw new Error("新邮箱收件箱仍有残留邮件");
-      },
-      { attempts: 4, delayMs: 3000 },
-    );
-    log.ok(`已重新生成全新邮箱（收件箱为空）: ${email}`);
-  } catch (err) {
-    // 删除失败时回退：改用当前邮箱，但必须确认收件箱没有残留上一轮的 Postman 邮件
-    log.warn(`删除并重新生成失败（${err instanceof Error ? err.message : String(err)}），改用当前邮箱并检查残留`);
-    await tm.waitForInboxLoaded(tab);
-    if (await tm.hasPostmanEmail(tab)) {
-      throw new Error("当前邮箱收件箱残留上一轮的 Postman 邮件且删除失败，无法保证全新邮箱，请重试");
+  if (await tm.hasResidualVerification(tab)) {
+    log.warn("收件箱残留上一轮的邮件/验证码，删除并重新生成邮箱");
+    try {
+      email = await tm.regenerateEmail(tab, initialEmail);
+      // 确认新邮箱收件箱干净
+      await retry(
+        async () => {
+          await tm.waitForInboxLoaded(tab);
+          if (await tm.hasResidualVerification(tab)) throw new Error("新邮箱收件箱仍有残留邮件");
+        },
+        { attempts: 4, delayMs: 3000 },
+      );
+      log.ok(`已重新生成全新邮箱（收件箱为空）: ${email}`);
+    } catch (err) {
+      // 删除失败时回退：改用当前邮箱，但必须确认收件箱没有残留上一轮的 Postman 邮件
+      log.warn(`删除并重新生成失败（${err instanceof Error ? err.message : String(err)}），改用当前邮箱并检查残留`);
+      await tm.waitForInboxLoaded(tab);
+      if (await tm.hasResidualVerification(tab)) {
+        throw new Error("当前邮箱收件箱残留上一轮的 Postman 邮件且删除失败，无法保证全新邮箱，请重试");
+      }
+      email = (await tm.readEmailAddress(tab)) ?? initialEmail;
+      log.warn(`使用当前邮箱（收件箱无残留 Postman 邮件）: ${email}`);
     }
-    email = (await tm.readEmailAddress(tab)) ?? initialEmail;
-    log.warn(`使用当前邮箱（收件箱无残留 Postman 邮件）: ${email}`);
+  } else {
+    email = initialEmail;
+    log.ok(`收件箱无残留验证码，直接使用当前邮箱: ${email}`);
   }
 
   // 3. 复制邮箱：尽力点击站内复制按钮，核心仍是把地址写入 plan_track

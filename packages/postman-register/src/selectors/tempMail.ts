@@ -64,6 +64,18 @@ export async function hasPostmanEmail(page: Page): Promise<boolean> {
 }
 
 /**
+ * 收件箱是否残留上一轮的老验证码 / Postman 邮件。
+ * 只有残留时才需要删除邮箱重新生成；干净收件箱直接使用当前地址。
+ */
+export async function hasResidualVerification(page: Page): Promise<boolean> {
+  const text = await readInboxListText(page);
+  if (!text.trim()) return false;
+  const normalized = text.replace(/[\s\u200b\u200c\u200d\u2060\ufeff\u00ad]/g, " ");
+  if (/postman/i.test(normalized)) return true;
+  return /(?:code|código|验证码|确认码)[^0-9]{0,15}\d{3}/i.test(normalized);
+}
+
+/**
  * 等待收件箱区域加载完成（出现邮件列表或空收件箱提示）。
  * 若页面里根本没有收件箱区域，则视为已就绪，避免无谓等待。
  */

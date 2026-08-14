@@ -211,19 +211,16 @@ export async function runProfile(ctx: StepContext): Promise<void> {
   await selectReactSelect(tab, ps.ilkDropdown, ["build APIs", "Build APIs", "Create APIs"], "I'd like to");
   await selectReactSelect(tab, ps.roleDropdown, ["backend developer", "Backend Developer"], "as a");
   await clickButton(tab, ps.teamSizeButton(tab, "1 member"), "团队规模 1 member");
-  await ps.waitForAiSection(tab);
-  const aiButton = ps.getStartedWithAiButton(tab);
-  if (await aiButton.isDisabled().catch(() => true)) {
-    log.info("Get started with AI 当前禁用，先与文本区域交互……");
-    let filled = false;
-    for (const chip of ps.examplePrompts(tab)) {
-      if (await chip.isVisible().catch(() => false)) { await chip.click(); filled = true; break; }
-    }
-    if (!filled) { await ps.aiTextarea(tab).fill("Build an API to manage my personal projects"); log.info("未找到示例按钮，已在文本区域直接输入文字"); }
-    await waitUntilEnabled(aiButton, CONFIG.timeouts.medium);
-    log.info("Get started with AI 已变为可用");
-  }
-  await aiButton.click().catch(async () => { log.warn("Get started with AI 无法点击，改用 Go forward 进入工作区"); await ps.goForwardButton(tab).click(); });
+
+  // 当前资料页的最后一步不是 AI 文本框，而是底部的
+  // “Take me to my Workspace”（data-testid="onboarding-get-started-button"）。
+  // 旧逻辑在这里等待 AI 区域，导致填写资料后没有继续点击最终按钮。
+  const workspaceButton = await firstVisible(ps.takeMeToWorkspaceButton(tab), CONFIG.timeouts.medium);
+  if (!workspaceButton) throw new Error("未找到按钮: Take me to my Workspace");
+  await waitUntilEnabled(workspaceButton, CONFIG.timeouts.medium);
+  await workspaceButton.click();
+  log.info("已点击 Take me to my Workspace");
+
   await waitForAnyVisibleText(tab, ["Collections", "APIs", "Workspace"], CONFIG.timeouts.long);
   log.ok("已进入 Postman 工作区");
 }

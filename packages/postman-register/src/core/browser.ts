@@ -10,6 +10,8 @@ export async function launchBrowser(): Promise<Browser> {
     os: CONFIG.browser.os,
     locale: CONFIG.browser.locale,
     fonts: CONFIG.browser.fonts,
+    // 配置了代理时走代理出口（换 IP 解决限流）；geoip 由库原生支持：通过代理查询出口 IP 并同步 WebRTC/地理位置
+    ...(CONFIG.proxy ? { proxy: CONFIG.proxy, ...(CONFIG.geoip ? { geoip: true } : {}) } : {}),
   });
 }
 
