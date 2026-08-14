@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "bun src/index.ts",
-    "start:headless": "bun src/index.ts --headless",
+    "start": "node --import tsx src/index.ts",
+    "start:headless": "node --import tsx src/index.ts --headless",
     "start:demo": "bun src/demo.ts",
+    "smoke": "node --import tsx src/smoke.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {

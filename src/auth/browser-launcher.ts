@@ -1,8 +1,10 @@
 import { chromium, type Browser } from "playwright";
+import type { LaunchOptions } from "camoufox-js";
 
 export const LOGIN_BROWSER_BACKENDS = ["playwright", "camoufox"] as const;
 export type LoginBrowserBackend = (typeof LOGIN_BROWSER_BACKENDS)[number];
 export type BrowserLauncher = (options: { headless: boolean }) => Promise<Browser>;
+export type CamoufoxBrowserLauncher = (options: LaunchOptions) => Promise<Browser>;
 
 export function parseLoginBrowserBackend(value: string | undefined): LoginBrowserBackend {
   const normalized = value?.trim().toLowerCase() || "camoufox";
@@ -14,7 +16,12 @@ export function parseLoginBrowserBackend(value: string | undefined): LoginBrowse
 
 export async function launchLoginBrowser(
   backend: LoginBrowserBackend,
-  options: { headless?: boolean; playwrightLauncher?: BrowserLauncher; camoufoxImporter?: () => Promise<typeof import("camoufox-js")> } = {},
+  options: {
+    headless?: boolean;
+    playwrightLauncher?: BrowserLauncher;
+    camoufoxLauncher?: CamoufoxBrowserLauncher;
+    camoufoxImporter?: () => Promise<typeof import("camoufox-js")>;
+  } = {},
 ): Promise<Browser> {
   const headless = options.headless ?? false;
   if (backend === "playwright") {
@@ -22,8 +29,14 @@ export async function launchLoginBrowser(
   }
 
   try {
-    const module = await (options.camoufoxImporter ?? (() => import("camoufox-js")))();
-    return await module.Camoufox({ headless });
+    const launchOptions: LaunchOptions = { headless };
+    if (options.camoufoxLauncher) return await options.camoufoxLauncher(launchOptions);
+    if (options.camoufoxImporter) {
+      const module = await options.camoufoxImporter();
+      return await module.Camoufox(launchOptions);
+    }
+    const module = await import("camoufox-js");
+    return await module.Camoufox(launchOptions);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(

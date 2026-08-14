@@ -1,7 +1,8 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseLoginBrowserBackend } from "./auth/browser-launcher";
 
-const projectRoot = path.resolve(import.meta.dir, "..");
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function resolveFromRoot(value: string | undefined, fallback: string): string {
   const raw = value && value.length > 0 ? value : fallback;
@@ -23,6 +24,7 @@ const streamKeepaliveIntervalMs = positiveNumber(process.env.STREAM_KEEPALIVE_IN
 const postmanFetchVerbose = /^(1|true|yes)$/i.test(process.env.POSTMAN_FETCH_VERBOSE || "");
 
 export const config = {
+  host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT) || 1930,
   dashboardPort: Number(process.env.DASHBOARD_PORT) || 1931,
   apiKey: process.env.API_KEY || "postman2api-secret-key",

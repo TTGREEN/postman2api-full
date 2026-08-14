@@ -5,6 +5,9 @@ import {
   fetchSettings,
   loginAccount,
   confirmSignup,
+  previewTempEmail,
+  openTempEmailPreview,
+  closeTempEmailPreview,
   deleteAccount,
   testAccount,
   warmupAccount,
@@ -635,6 +638,71 @@ function AddAccountModal({
   const [importResult, setImportResult] = useState<AccountImportResponse | null>(null);
   const [confirmationId, setConfirmationId] = useState<string | null>(null);
   const [confirmationState, setConfirmationState] = useState<"idle" | "sending" | "sent">("idle");
+  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false);
+  const [emailPreviewSession, setEmailPreviewSession] = useState<{ sessionId: string; expiresAt: number } | null>(null);
+  const emailPreviewSessionRef = useRef<string | null>(null);
+
+  useEffect(() => () => {
+    const sessionId = emailPreviewSessionRef.current;
+    emailPreviewSessionRef.current = null;
+    if (sessionId) void closeTempEmailPreview(sessionId).catch(() => undefined);
+  }, []);
+
+  const closeEmailPreview = async (showMessage = true) => {
+    const sessionId = emailPreviewSession?.sessionId;
+    emailPreviewSessionRef.current = null;
+    setEmailPreviewSession(null);
+    if (!sessionId) return;
+    try {
+      await closeTempEmailPreview(sessionId);
+      if (showMessage) showToast("临时邮箱窗口已关闭", "info");
+    } catch (e: any) {
+      if (showMessage) showToast("关闭临时邮箱失败：" + e.message, "error");
+    }
+  };
+
+  const openEmailPreview = async () => {
+    const sessionId = emailPreviewSession?.sessionId;
+    if (!sessionId || emailPreviewLoading || loading) return;
+    setEmailPreviewLoading(true);
+    try {
+      await openTempEmailPreview(sessionId);
+      showToast("已刷新并唤起原临时邮箱窗口，请手动查看收件箱", "info");
+    } catch (e: any) {
+      emailPreviewSessionRef.current = null;
+      setEmailPreviewSession(null);
+      showToast("临时邮箱会话已失效，请重新获取：" + e.message, "error");
+    } finally {
+      setEmailPreviewLoading(false);
+    }
+  };
+
+  const fetchEmailPreview = async () => {
+    if (emailPreviewLoading || loading) return;
+    setEmailPreviewLoading(true);
+    try {
+      const result = await previewTempEmail();
+      setEmail(result.email);
+      emailPreviewSessionRef.current = result.sessionId;
+      setEmailPreviewSession({ sessionId: result.sessionId, expiresAt: result.expiresAt });
+      showToast("测试邮箱已回填，临时邮箱窗口会保留 10 分钟", "success");
+    } catch (e: any) {
+      showToast("获取测试邮箱失败：" + e.message, "error");
+    } finally {
+      setEmailPreviewLoading(false);
+    }
+  };
+
+  const changeEmail = (value: string) => {
+    if (emailPreviewSession && value !== email) void closeEmailPreview(false);
+    setEmail(value);
+  };
+
+  const closeModal = () => {
+    if (loading) return;
+    void closeEmailPreview(false);
+    onClose();
+  };
 
   const confirmRegistration = async () => {
     if (!confirmationId || confirmationState !== "idle") return;
@@ -685,7 +753,7 @@ function AddAccountModal({
   };
 
   return (
-    <div className="modal-overlay open" onClick={() => { if (!loading) onClose(); }}>
+    <div className="modal-overlay open" onClick={closeModal}>
       <div className={`modal ${mode === "import" ? "import-modal" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">添加 Postman 账号</div>
         <div className="filter-bar" style={{ marginBottom: 16 }}>
@@ -706,7 +774,38 @@ function AddAccountModal({
           {mode !== "import" && (
             <div className="dialog-field">
               <span className="dialog-label">邮箱</span>
-              <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@example.com" />
+              <input className="input" value={email} onChange={(e) => changeEmail(e.target.value)} placeholder="user@example.com" />
+              {mode === "automated" && (
+                emailPreviewSession ? (
+                  <div className="email-preview-actions">
+                    <button
+                      type="button"
+                      className="dialog-btn email-preview-btn"
+                      disabled={emailPreviewLoading}
+                      onClick={openEmailPreview}
+                    >
+                      {emailPreviewLoading ? "唤起中..." : "打开收件箱"}
+                    </button>
+                    <button
+                      type="button"
+                      className="dialog-btn email-preview-close-btn"
+                      disabled={emailPreviewLoading}
+                      onClick={() => { void closeEmailPreview(); }}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="dialog-btn email-preview-btn"
+                    disabled={loading || emailPreviewLoading}
+                    onClick={fetchEmailPreview}
+                  >
+                    {emailPreviewLoading ? "获取中..." : "获取测试邮箱"}
+                  </button>
+                )
+              )}
             </div>
           )}
           {mode === "automated" && (
@@ -751,6 +850,11 @@ function AddAccountModal({
             </div>
           ) : mode === "automated" ? (
             <div className="signup-guide">
+              {emailPreviewSession && (
+                <div className="email-preview-status">
+                  临时邮箱会话已保留。收到邮件后点击“打开收件箱”手动查看验证码；系统不会读取邮件内容。
+                </div>
+              )}
               <div className="dialog-help">Camoufox 会自动填写注册表单并推进普通首次设置。遇到以下步骤时会暂停，完成后回到此弹窗点击“完成确认”：</div>
               <ol className="signup-steps">
                 <li>手动完成邮箱验证码和 CAPTCHA。</li>
@@ -805,10 +909,10 @@ function AddAccountModal({
           </div>
         )}
         <div className="dialog-actions">
-          <button className="dialog-btn" disabled={loading} onClick={onClose}>{mode === "import" && importResult ? "完成" : "取消"}</button>
+          <button className="dialog-btn" disabled={loading} onClick={closeModal}>{mode === "import" && importResult ? "完成" : "取消"}</button>
           <button
             className="dialog-btn dialog-btn-primary"
-            disabled={loading || (mode === "import" ? !tokens.trim() : !email.trim()) || (mode === "automated" && password.length < 8)}
+            disabled={loading || emailPreviewLoading || (mode === "import" ? !tokens.trim() : !email.trim()) || (mode === "automated" && password.length < 8)}
             onClick={submit}
           >
             {loading

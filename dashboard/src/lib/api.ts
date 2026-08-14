@@ -106,6 +106,18 @@ export async function confirmSignup(confirmationId: string): Promise<{ success: 
   });
 }
 
+export async function previewTempEmail(): Promise<{ success: true; sessionId: string; email: string; expiresAt: number }> {
+  return api("/api/accounts/signup/email-preview", { method: "POST" });
+}
+
+export async function openTempEmailPreview(sessionId: string): Promise<{ success: true }> {
+  return api(`/api/accounts/signup/email-preview/${encodeURIComponent(sessionId)}/open`, { method: "POST" });
+}
+
+export async function closeTempEmailPreview(sessionId: string): Promise<{ success: true }> {
+  return api(`/api/accounts/signup/email-preview/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+}
+
 export async function addAccountManual(email: string, tokens: any): Promise<{ success: boolean }> {
   return api("/api/accounts", {
     method: "POST",

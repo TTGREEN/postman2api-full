@@ -106,6 +106,12 @@ tr:hover td{background:#fdfdfd}
 .signup-warning{padding:9px 10px;border:1px solid #ead7c5;border-radius:6px;background:#fff8f1;color:#7b4d2c;font-size:11px;line-height:1.5}
 .dialog-field{display:flex;align-items:center;gap:10px}
 .dialog-label{width:54px;font-size:13px;color:var(--fg-muted);flex:0 0 auto}
+.email-preview-btn{flex:0 0 auto;white-space:nowrap;background:#f0f5ff;color:#315c9f}
+.email-preview-btn:hover{background:#e6efff}
+.email-preview-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.email-preview-close-btn{padding:0 12px;color:#8a5148;background:#fff4f2}
+.email-preview-close-btn:hover{background:#feeae6}
+.email-preview-status{padding:9px 10px;border:1px solid #d7e4f5;border-radius:6px;background:#f5f9ff;color:#466280;font-size:11px;line-height:1.5}
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
 .dialog-btn{height:34px;padding:0 16px;border-radius:999px;background:#fafafa;color:#444;font-size:13px;font-weight:600;border:none;cursor:pointer}
 .dialog-btn:hover{background:#f3f3f3}

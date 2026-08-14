@@ -12,6 +12,7 @@ import { settings } from "./db/schema";
 import { eq } from "drizzle-orm";
 import { isDefaultEncryptionKey } from "./utils/crypto";
 import { acceptsApiKey } from "./auth/api-key";
+import { tempEmailPreviewSessions } from "./auth/temp-email-preview-runtime";
 
 const app = new Hono();
 
@@ -63,6 +64,7 @@ async function getApiKey(): Promise<string> {
 
 // Start server
 const server = Bun.serve({
+  hostname: config.host,
   port: config.port,
   idleTimeout: config.serverIdleTimeoutSeconds,
   fetch(request, bunServer) {
@@ -96,15 +98,16 @@ if (isDefaultEncryptionKey()) {
   console.warn("[postman2api] WARNING: Using default encryption key. Set ENCRYPTION_KEY in .env!");
 }
 
-console.log(`[postman2api] Server running on http://localhost:${config.port}`);
-console.log(`[postman2api] OpenAI:  http://localhost:${config.port}/v1/chat/completions`);
-console.log(`[postman2api] Anthropic: http://localhost:${config.port}/v1/messages`);
-console.log(`[postman2api] Dashboard: http://localhost:${config.port}/`);
-console.log(`[postman2api] WebSocket: ws://localhost:${config.port}/ws`);
+console.log(`[postman2api] Server running on http://${config.host}:${config.port}`);
+console.log(`[postman2api] OpenAI:  http://${config.host}:${config.port}/v1/chat/completions`);
+console.log(`[postman2api] Anthropic: http://${config.host}:${config.port}/v1/messages`);
+console.log(`[postman2api] Dashboard: http://${config.host}:${config.port}/`);
+console.log(`[postman2api] WebSocket: ws://${config.host}:${config.port}/ws`);
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   stopWarmupScheduler();
   server.stop();
+  await tempEmailPreviewSessions.closeAll();
 });
 
 export { app, server };

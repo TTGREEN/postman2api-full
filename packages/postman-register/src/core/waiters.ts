@@ -1,8 +1,9 @@
-import { sleep } from "bun";
 import type { Locator, Page } from "playwright";
 import { CONFIG } from "../config";
 
-export { sleep };
+export function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 /** 依次轮询候选定位器，返回第一个可见的；超时返回 null */
 export async function firstVisible(candidates: Locator[], timeout = CONFIG.timeouts.short): Promise<Locator | null> {

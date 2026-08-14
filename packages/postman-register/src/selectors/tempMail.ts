@@ -1,7 +1,6 @@
-import { sleep } from "bun";
 import type { Locator, Page } from "playwright";
 import { CONFIG } from "../config";
-import { firstVisible } from "../core/waiters";
+import { firstVisible, sleep } from "../core/waiters";
 
 /**
  * temp-mail.org 的 DOM 细节全部集中在这里。
@@ -130,6 +129,41 @@ export async function waitForEmailDisplayed(page: Page, timeout = CONFIG.timeout
   const blocked = await getBlockingState(page);
   if (blocked) throw new Error(`临时邮箱页面被阻断：${blocked}`);
   throw new Error(`等待临时邮箱地址超时（${timeout}ms）：未找到有效的可见邮箱地址`);
+}
+
+/**
+ * 有限次数获取邮箱地址。仅对“地址尚未生成”做刷新重试；若页面明确出现安全验证、
+ * 限流或访问拒绝，则立即返回错误，不尝试绕过站点限制。
+ */
+export async function acquireEmailAddress(
+  page: Page,
+  options: {
+    attempts?: number;
+    attemptTimeout?: number;
+    backoffMs?: number;
+    reloadTimeout?: number;
+  } = {},
+): Promise<string> {
+  const attempts = options.attempts ?? CONFIG.timeouts.emailAcquireAttempts;
+  const attemptTimeout = options.attemptTimeout ?? CONFIG.timeouts.emailAcquireAttempt;
+  const backoffMs = options.backoffMs ?? CONFIG.timeouts.emailAcquireBackoff;
+  const reloadTimeout = options.reloadTimeout ?? CONFIG.timeouts.pageLoad;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await waitForEmailDisplayed(page, attemptTimeout);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/页面被阻断/.test(message) || attempt === attempts) break;
+      await sleep(backoffMs * attempt);
+      await page.reload({ waitUntil: "domcontentloaded", timeout: reloadTimeout });
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`临时邮箱地址获取失败（已尝试 ${attempts} 次）：${message}`);
 }
 
 /** 站内“复制邮箱”按钮 */

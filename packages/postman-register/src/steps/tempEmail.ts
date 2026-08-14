@@ -1,7 +1,7 @@
 import { CONFIG } from "../config";
 import type { StepContext } from "../types";
 import { log } from "../core/logger";
-import { retry, sleep } from "../core/waiters";
+import { retry } from "../core/waiters";
 import { snapshot } from "../core/snapshot";
 import * as tm from "../selectors/tempMail";
 
@@ -19,26 +19,7 @@ export async function runTempEmail(ctx: StepContext): Promise<void> {
   plan.emailTab = tab;
 
   // 1. 有限次数获取地址：短等待失败后刷新并退避；遇到访问控制则立即报告，不尝试绕过。
-  let initialEmail = "";
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= CONFIG.timeouts.emailAcquireAttempts; attempt++) {
-    try {
-      initialEmail = await tm.waitForEmailDisplayed(tab, CONFIG.timeouts.emailAcquireAttempt);
-      break;
-    } catch (err) {
-      lastError = err;
-      const message = err instanceof Error ? err.message : String(err);
-      if (/页面被阻断/.test(message) || attempt === CONFIG.timeouts.emailAcquireAttempts) break;
-      const backoff = CONFIG.timeouts.emailAcquireBackoff * attempt;
-      log.warn(`临时邮箱地址未就绪（第 ${attempt}/${CONFIG.timeouts.emailAcquireAttempts} 次）：${message}；${backoff}ms 后刷新重试`);
-      await sleep(backoff);
-      await tab.reload({ waitUntil: "domcontentloaded", timeout: CONFIG.timeouts.pageLoad });
-    }
-  }
-  if (!initialEmail) {
-    const message = lastError instanceof Error ? lastError.message : String(lastError);
-    throw new Error(`临时邮箱地址获取失败（已尝试 ${CONFIG.timeouts.emailAcquireAttempts} 次）：${message}`);
-  }
+  const initialEmail = await tm.acquireEmailAddress(tab);
   log.info(`邮箱已显示在页面上: ${initialEmail}`);
   const items = await snapshot(tab);
   log.info(`take_snapshot 发现 ${items.length} 个可见交互元素`);

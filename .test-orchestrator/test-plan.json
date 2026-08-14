@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "environment_fingerprint": {
+    "runtime": "bun-1.3.11",
+    "node": "24.18.0",
+    "platform": "windows",
+    "login_browser_backend": "camoufox",
+    "repository_head": "50a2ca3a0dd6e44fea4d5e14fa91d70713806c77"
+  },
+  "tests": [
+    {
+      "test_id": "postman.typecheck",
+      "name": "Root TypeScript typecheck",
+      "framework": "bun",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "run", "typecheck"],
+      "source_files": ["src/**/*.ts", "dashboard/src/**/*.ts", "dashboard/src/**/*.tsx", "packages/postman-register/src/**/*.ts"],
+      "test_files": ["tsconfig.json", "package.json", "dashboard/tsconfig.json", "packages/postman-register/tsconfig.json"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.unit-integration",
+      "name": "Bun unit and integration suite",
+      "framework": "bun",
+      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run-unit-tests.ps1"],
+      "source_files": ["src/**/*.ts", "dashboard/src/**/*.ts", "dashboard/src/**/*.tsx"],
+      "test_files": ["tests/**/*.test.ts", "package.json", "scripts/run-unit-tests.ps1"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.stream",
+      "name": "Streaming cancellation regression suite",
+      "framework": "bun",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "run", "test:stream"],
+      "source_files": ["src/**/*.ts"],
+      "test_files": ["tests/stream-cancel.test.ts", "package.json"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.dashboard-build",
+      "name": "Dashboard production build",
+      "framework": "bun",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "run", "build"],
+      "source_files": ["dashboard/src/**/*.ts", "dashboard/src/**/*.tsx", "dashboard/index.html"],
+      "test_files": ["dashboard/package.json", "dashboard/bun.lock", "package.json"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.register-demo",
+      "name": "Registration browser worker local smoke",
+      "framework": "node",
+      "command": ["C:\\Program Files\\nodejs\\node.exe", "--import", "tsx", "packages/postman-register/src/smoke.ts"],
+      "source_files": ["src/auth/**/*.ts", "scripts/postman-login-worker.ts", "packages/postman-register/src/**/*.ts"],
+      "test_files": ["package.json", "packages/postman-register/package.json", "bun.lock"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.camoufox-smoke",
+      "name": "Camoufox local browser smoke test",
+      "framework": "node",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "scripts/camoufox-smoke.ts"],
+      "source_files": ["scripts/camoufox-smoke.ts", "src/auth/browser-launcher.ts"],
+      "test_files": ["package.json", "bun.lock"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.temp-email-preview",
+      "name": "Temporary email preview worker smoke",
+      "framework": "node",
+      "command": ["C:\\Program Files\\nodejs\\node.exe", "--import", "tsx", "scripts/temp-email-preview-smoke.ts"],
+      "source_files": ["src/auth/temp-email-preview-runtime.ts", "scripts/temp-email-preview-worker.ts", "packages/postman-register/src/core/browser.ts", "packages/postman-register/src/selectors/tempMail.ts"],
+      "test_files": ["scripts/temp-email-preview-smoke.ts", "package.json", "bun.lock"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.health-runtime",
+      "name": "Local service health endpoint",
+      "framework": "powershell",
+      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/health-runtime-smoke.ps1"],
+      "source_files": ["src/index.ts", "src/config.ts", "scripts/health-runtime-smoke.ps1"],
+      "test_files": [".env.example", "scripts/health-runtime-smoke.ps1"],
+      "depends_on_tests": ["postman.dashboard-build"]
+    },
+    {
+      "test_id": "postman.temp-email-preview-e2e",
+      "name": "Temporary email preview dashboard E2E",
+      "framework": "playwright",
+      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/temp-email-preview-e2e.ps1"],
+      "source_files": ["dashboard/src/App.tsx", "dashboard/src/index.css", "dashboard/src/lib/api.ts"],
+      "test_files": ["scripts/temp-email-preview-e2e.ts", "scripts/temp-email-preview-e2e.ps1", "package.json", "bun.lock"],
+      "depends_on_tests": ["postman.dashboard-build"],
+      "evidence_globs": [
+        {"type": "screenshot", "pattern": ".test-state/artifacts/temp-email-preview-e2e/*.png"}
+      ]
+    }
+  ],
+  "dependencies": {
+    "file_rules": {
+      "src/**/*.ts": ["postman.typecheck", "postman.unit-integration", "postman.stream"],
+      "dashboard/src/**/*.tsx": ["postman.typecheck", "postman.dashboard-build"],
+      "packages/postman-register/src/**/*.ts": ["postman.typecheck", "postman.register-demo"],
+      "src/auth/postman-login-runtime.ts": ["postman.unit-integration", "postman.register-demo"],
+      "scripts/postman-login-worker.ts": ["postman.register-demo"],
+      "scripts/camoufox-smoke.ts": ["postman.camoufox-smoke"],
+      "src/auth/temp-email-preview-runtime.ts": ["postman.unit-integration", "postman.temp-email-preview"],
+      "scripts/temp-email-preview-worker.ts": ["postman.temp-email-preview"],
+      "scripts/temp-email-preview-smoke.ts": ["postman.temp-email-preview"],
+      "dashboard/src/App.tsx": ["postman.temp-email-preview-e2e"],
+      "dashboard/src/index.css": ["postman.temp-email-preview-e2e"],
+      "dashboard/src/lib/api.ts": ["postman.temp-email-preview-e2e"],
+      "scripts/temp-email-preview-e2e.ts": ["postman.temp-email-preview-e2e"],
+      "scripts/temp-email-preview-e2e.ps1": ["postman.temp-email-preview-e2e"]
+    },
+    "symbol_rules": {},
+    "file_dependencies": {}
+  }
+}

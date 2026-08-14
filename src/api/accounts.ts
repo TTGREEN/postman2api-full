@@ -8,10 +8,75 @@ import { clearSignupConfirmation, confirmSignupCompletion, prepareSignupConfirma
 import { testAccountAvailability } from "../auth/account-test";
 import { warmupAccount } from "../auth/warmup";
 import { acquireSignupTask, getActiveSignupTask, releaseSignupTask } from "../auth/signup-task";
+import {
+  tempEmailPreviewSessions,
+  type TempEmailPreviewSession,
+} from "../auth/temp-email-preview-runtime";
 import { pool } from "../proxy/pool";
 import { broadcast } from "../ws/index";
 
 export const accountsRouter = new Hono();
+
+export interface TempEmailPreviewService {
+  create: () => Promise<TempEmailPreviewSession>;
+  focus: (sessionId: string) => Promise<boolean>;
+  close: (sessionId: string) => Promise<boolean>;
+}
+
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function normalizePreviewEmail(value: string): string | null {
+  const email = value.trim().toLowerCase();
+  if (email.length > 254) return null;
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(email)
+    ? email
+    : null;
+}
+
+export async function handleTempEmailPreviewRequest(
+  c: Context,
+  service: TempEmailPreviewService = tempEmailPreviewSessions,
+) {
+  try {
+    const session = await service.create();
+    const email = normalizePreviewEmail(session.email);
+    if (!email) {
+      await service.close(session.sessionId).catch(() => undefined);
+      return c.json({ error: "临时邮箱页面未返回有效邮箱地址" }, 502);
+    }
+    return c.json({ success: true, sessionId: session.sessionId, email, expiresAt: session.expiresAt });
+  } catch {
+    console.warn("[temp-email-preview] Preview worker failed");
+    return c.json({ error: "获取测试邮箱失败，请稍后重试" }, 502);
+  }
+}
+
+accountsRouter.post("/signup/email-preview", (c) => handleTempEmailPreviewRequest(c));
+
+export async function handleOpenTempEmailPreviewRequest(
+  c: Context,
+  service: TempEmailPreviewService = tempEmailPreviewSessions,
+) {
+  const sessionId = c.req.param("sessionId") ?? "";
+  if (!SESSION_ID_PATTERN.test(sessionId) || !(await service.focus(sessionId))) {
+    return c.json({ error: "临时邮箱会话不存在或已过期" }, 404);
+  }
+  return c.json({ success: true });
+}
+
+export async function handleCloseTempEmailPreviewRequest(
+  c: Context,
+  service: TempEmailPreviewService = tempEmailPreviewSessions,
+) {
+  const sessionId = c.req.param("sessionId") ?? "";
+  if (!SESSION_ID_PATTERN.test(sessionId) || !(await service.close(sessionId))) {
+    return c.json({ error: "临时邮箱会话不存在或已过期" }, 404);
+  }
+  return c.json({ success: true });
+}
+
+accountsRouter.post("/signup/email-preview/:sessionId/open", (c) => handleOpenTempEmailPreviewRequest(c));
+accountsRouter.delete("/signup/email-preview/:sessionId", (c) => handleCloseTempEmailPreviewRequest(c));
 
 type LoginAccount = typeof loginPostmanAccount;
 type WarmupAccount = typeof warmupAccount;

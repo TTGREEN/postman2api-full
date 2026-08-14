@@ -35,4 +35,18 @@ describe("login browser launcher without real browsers", () => {
       camoufoxImporter: async () => { throw new Error("native module unavailable"); },
     })).rejects.toThrow("Automatic fallback is disabled");
   });
+
+  test("uses the injected Camoufox launcher", async () => {
+    const fakeBrowser = { close: async () => undefined } as any;
+    let received: unknown;
+
+    expect(await launchLoginBrowser("camoufox", {
+      headless: true,
+      camoufoxLauncher: async (options) => {
+        received = options;
+        return fakeBrowser;
+      },
+    })).toBe(fakeBrowser);
+    expect(received).toEqual({ headless: true });
+  });
 });

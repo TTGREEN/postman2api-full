@@ -1,6 +1,13 @@
 import { launchLoginBrowser } from "../src/auth/browser-launcher.ts";
+import { smokePostmanLoginWorker } from "../src/auth/postman-login-runtime.ts";
 
 const publicLoginPage = process.argv.includes("--postman-login");
+if (typeof Bun !== "undefined" && !publicLoginPage) {
+  await smokePostmanLoginWorker();
+  console.log("Camoufox smoke: Bun launched the Node worker, opened about:blank, and cleaned up");
+  process.exit(0);
+}
+
 const browser = await launchLoginBrowser("camoufox", { headless: true });
 try {
   const context = await browser.newContext();

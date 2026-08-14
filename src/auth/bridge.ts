@@ -4,13 +4,13 @@ import { encrypt } from "../utils/crypto";
 import { broadcast } from "../ws/index";
 import { eq } from "drizzle-orm";
 import {
-  loginPostman,
   type LoginLogEntry,
   type PostmanAuthFlow,
   type PostmanLoginOptions,
   type PostmanLoginResult,
   type SignupAutomation,
 } from "./postman-login";
+import { loginPostmanForRuntime } from "./postman-login-runtime";
 import { pool } from "../proxy/pool";
 import { warmupAccount } from "./warmup";
 import { testAccountAvailability } from "./account-test";
@@ -27,7 +27,7 @@ export async function loginPostmanAccount(
   requestedEmail: string | undefined,
   onLog?: (log: LoginLogEntry) => void,
   dependencies: LoginDependencies = {
-    login: loginPostman,
+    login: loginPostmanForRuntime,
     warmup: warmupAccount,
     test: testAccountAvailability,
   },

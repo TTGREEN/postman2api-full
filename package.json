@@ -13,8 +13,8 @@
     "test:stream": "bun test tests/stream-cancel.test.ts",
     "browser:camoufox:fetch": "bun scripts/install-camoufox.ts",
     "browser:camoufox:smoke": "bun scripts/camoufox-smoke.ts",
-    "browser:camoufox:smoke:node": "node --experimental-strip-types scripts/camoufox-smoke.ts",
-    "browser:camoufox:smoke:postman": "bun scripts/camoufox-smoke.ts --postman-login"
+    "browser:camoufox:smoke:node": "node --import tsx scripts/camoufox-smoke.ts",
+    "browser:camoufox:smoke:postman": "node --experimental-strip-types scripts/camoufox-smoke.ts --postman-login"
   },
   "dependencies": {
     "camoufox-js": "0.12.0",
@@ -25,6 +25,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "drizzle-kit": "^0.31.10",
+    "tsx": "4.22.4",
     "typescript": "^5.8.0"
   }
 }
