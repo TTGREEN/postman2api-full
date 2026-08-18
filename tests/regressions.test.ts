@@ -56,6 +56,10 @@ const request = {
 
 const monthlyCreditError = "Your team has exceeded its monthly AI credit limit by 16%. You'll regain Agent Mode access in 30 days. To continue using Agent Mode without interruption, enable pay-as-you-go";
 
+function stubAgentModeReady(postman: any) {
+  postman.ensureAiUserAgentMode = async () => ({ success: true, enabled: true, cached: true });
+}
+
 afterEach(() => {
   clearConversations();
   pool.clearRuntimeState();
@@ -211,6 +215,16 @@ describe("stream error detection", () => {
     expect(reader.error).toContain("Agent Mode");
   });
 
+  test("classifies direct Agent Mode not-enabled text as retryable setup state", () => {
+    const reader = new PostmanStreamReader();
+    reader.feed(`data: ${JSON.stringify({
+      eventType: "failure",
+      data: { message: "Postman Agent Mode is not enabled for this account yet. Enable ai user agent mode and retry shortly." },
+    })}`);
+    expect(reader.retryableError).toBe(true);
+    expect(reader.error).toContain("Agent Mode");
+  });
+
   test("classifies an empty failure event as temporary AI provisioning", () => {
     const reader = new PostmanStreamReader();
     reader.feed(`data: ${JSON.stringify({ eventType: "failure", data: {} })}`);
@@ -227,6 +241,7 @@ describe("stream error detection", () => {
 
   test("does not expose an empty failure event as a successful stream", async () => {
     const postman = new PostmanProvider() as any;
+    stubAgentModeReady(postman);
     postman.fetchWithTimeout = async () => new Response(
       `data: ${JSON.stringify({ eventType: "failure", data: {} })}\n\n`,
       { status: 200, headers: { "content-type": "text/event-stream" } },
@@ -241,6 +256,7 @@ describe("stream error detection", () => {
 
   test("returns the real monthly credit error before exposing an HTTP 200 stream", async () => {
     const postman = new PostmanProvider() as any;
+    stubAgentModeReady(postman);
     postman.fetchWithTimeout = async () => new Response(
       `data: ${JSON.stringify({
         eventType: "failure",
@@ -342,8 +358,29 @@ describe("stream error detection", () => {
     }
   });
 
+  test("ensures account-level Agent Mode before non-streaming chat", async () => {
+    const postman = new PostmanProvider() as any;
+    let ensured = false;
+    postman.ensureAiUserAgentMode = async () => {
+      ensured = true;
+      return { success: true, enabled: true, cached: true };
+    };
+    postman.fetchWithTimeout = async () => {
+      expect(ensured).toBe(true);
+      return new Response(
+        `data: ${JSON.stringify({ eventType: "textChunk", data: { textContent: "POSTMAN2API_OK" } })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    };
+
+    const result = await postman.chatCompletion(account, { ...request, stream: false });
+    expect(result.success).toBe(true);
+    expect(result.response?.choices[0]?.message.content).toBe("POSTMAN2API_OK");
+  });
+
   test("returns quotaExhausted before exposing an HTTP 200 stream", async () => {
     const postman = new PostmanProvider() as any;
+    stubAgentModeReady(postman);
     postman.fetchWithTimeout = async () => new Response(
       `data: ${JSON.stringify({
         eventType: "usage",
@@ -360,6 +397,7 @@ describe("stream error detection", () => {
 
   test("does not wrap a JSON upstream error as an empty stream", async () => {
     const postman = new PostmanProvider() as any;
+    stubAgentModeReady(postman);
     postman.fetchWithTimeout = async () => new Response(
       JSON.stringify({ error: { message: "upstream failed" } }),
       { status: 200, headers: { "content-type": "text/event-stream" } },
@@ -373,6 +411,7 @@ describe("stream error detection", () => {
 
   test("classifies quota received after a delta and errors the exposed stream", async () => {
     const postman = new PostmanProvider() as any;
+    stubAgentModeReady(postman);
     const encoder = new TextEncoder();
     const delta = `data: ${JSON.stringify({ eventType: "textChunk", data: { textContent: "hello" } })}\n`;
     const quota = `data: ${JSON.stringify({
@@ -401,6 +440,7 @@ describe("stream error detection", () => {
 
   test("propagates a socket failure after the first delta and reports stream failure once", async () => {
     const postman = new PostmanProvider() as any;
+    stubAgentModeReady(postman);
     const encoder = new TextEncoder();
     const delta = `data: ${JSON.stringify({ eventType: "textChunk", data: { textContent: "hello" } })}\n`;
     let failUpstream!: () => void;

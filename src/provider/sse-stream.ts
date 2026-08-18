@@ -37,6 +37,10 @@ const QUOTA_ERROR_PATTERNS = [
 const AGENT_MODE_ERROR_PATTERNS = [
   "input_validation_error: forbidden",
   "ai_user_agent_mode",
+  "ai user agent mode",
+  "user agent mode",
+  "agent mode is not enabled",
+  "agent mode not enabled",
   "agent mode is disabled",
   "agent mode access is disabled",
 ];

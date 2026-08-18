@@ -27,6 +27,7 @@ const CHAT_ENDPOINT = "/_gw/chat";
 const REQUEST_TIMEOUT_MS = 300_000;
 const TTFB_TIMEOUT_MS = 45_000;
 const AGENT_MODE_SETTING_TIMEOUT_MS = 10_000;
+const AGENT_MODE_PROPAGATION_DELAY_MS = 1_500;
 const MAX_QUERY_LEN = 9_500;
 const MAX_CONTEXT_LEN = 800_000;
 
@@ -63,7 +64,7 @@ function normalizeThinkingLevel(value: unknown): "low" | "medium" | "high" {
 }
 
 export class PostmanProvider extends BaseProvider {
-  private readonly agentModeSettingCache = new Set<string>();
+  private readonly agentModeSettingCache = new Map<string, number>();
   name = "postman" as const;
   override nativeFormat: "openai" | "anthropic" = "openai";
   supportedModels: ModelInfo[] = POSTMAN_MODELS;
@@ -342,7 +343,7 @@ export class PostmanProvider extends BaseProvider {
       );
 
       if (response.ok) {
-        this.agentModeSettingCache.add(cacheKey);
+        this.agentModeSettingCache.set(cacheKey, Date.now());
         return { success: true, enabled: true };
       }
 
@@ -362,12 +363,34 @@ export class PostmanProvider extends BaseProvider {
     }
   }
 
+  private async ensureAiUserAgentModeBeforeChat(
+    account: Account,
+    request: ChatCompletionRequest,
+  ): Promise<ProviderResult | null> {
+    const result = await this.ensureAiUserAgentMode(account);
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error || "Postman Agent Mode is not enabled for this account yet.",
+        retryable: true,
+      };
+    }
+
+    if (!result.cached) {
+      await sleep(AGENT_MODE_PROPAGATION_DELAY_MS, request.signal);
+    }
+    return null;
+  }
+
   async chatCompletion(account: Account, request: ChatCompletionRequest): Promise<ProviderResult> {
     const postmanModel = this.resolveModel(request.model);
     if (postmanModel === undefined) return { success: false, error: `Invalid model: ${request.model}` };
 
     const tokens = this.getTokens(account);
     if (!tokens) return { success: false, error: "Invalid or missing Postman tokens" };
+
+    const agentModeReadiness = await this.ensureAiUserAgentModeBeforeChat(account, request);
+    if (agentModeReadiness) return agentModeReadiness;
 
     const completionId = this.generateId();
     const body = this.buildRequestBody(request, tokens, postmanModel, String(account.id));
@@ -469,6 +492,9 @@ export class PostmanProvider extends BaseProvider {
 
     const tokens = this.getTokens(account);
     if (!tokens) return { success: false, error: "Invalid or missing Postman tokens" };
+
+    const agentModeReadiness = await this.ensureAiUserAgentModeBeforeChat(account, request);
+    if (agentModeReadiness) return agentModeReadiness;
 
     const body = this.buildRequestBody(request, tokens, postmanModel, String(account.id));
 
@@ -966,6 +992,21 @@ function parseRetryAfterMs(value: string | null): number {
 
 function isMeaningfulDelta(delta: PostmanDelta): boolean {
   return Boolean(delta.content || delta.reasoning_content || delta.tool_calls?.length);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error("Client disconnected"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function cancelReader(
