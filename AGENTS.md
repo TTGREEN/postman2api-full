@@ -16,7 +16,7 @@
 
 ## 验证命令
 
-- 结构审计：`python C:\Users\Administrator\.codex\skills\govern-project-structure\scripts\audit_project_layout.py E:\反代\postman2api`
+- 结构审计：`python scripts/ops/audit-project-layout.py .`
 - 类型检查：`bun run typecheck`
 - 核心回归：`bun test tests/regressions.test.ts --timeout 30000`
 - 发布包生成：`bun run release:package`

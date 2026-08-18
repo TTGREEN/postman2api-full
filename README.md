@@ -207,10 +207,13 @@ bun run dev
 # 构建生产面板资源
 bun run build
 
-# 检查 TypeScript
-bun run typecheck
+# 一键执行 PR / CI 同等检查
+bun run ci:check
 
-# 运行测试
+# 单项检查
+bun run audit:layout
+bun run validate:api
+bun run typecheck
 bun test
 
 # 仅运行流式取消测试
@@ -224,6 +227,13 @@ bun run browser:camoufox:smoke
 bun run browser:camoufox:smoke:node
 # 可选：对公开的 Postman 登录页做网络检查
 bun run browser:camoufox:smoke:postman
+```
+
+上游兼容探针通过正在运行的本地 HTTP 服务检查健康、模型发现，并可选执行最小真实聊天：
+
+```bash
+bun run smoke:upstream -- --api-key YOUR_API_KEY
+bun run smoke:upstream -- --api-key YOUR_API_KEY --chat --model auto
 ```
 
 ## 架构
@@ -245,5 +255,10 @@ React dashboard <------ WebSocket updates
 ## 相关文档
 
 - [Postman 账号 Token 获取与 JSON 导入](docs/postman-account-token.md)
+- [Postman 官方 MCP 接入说明](docs/postman-official-mcp.md)
+- [上游兼容监控](docs/upstream-compatibility.md)
+- [发布策略](docs/release-strategy.md)
+- [OpenAPI 描述](docs/openapi.json)
+- [Postman Collection 示例](examples/postman2api.postman_collection.json)
 - [Postman 账号注册技能](docs/postman-register-skill.md)
 - [Camoufox 自动化示例](examples/camoufox-automation/README.md)

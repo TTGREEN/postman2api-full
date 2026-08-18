@@ -1,0 +1,32 @@
+name: 功能建议
+description: 提出新功能、UI 优化或文档改进
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 模块
+      options:
+        - API 兼容层
+        - 账号池 / 路由
+        - 管理面板 UI
+        - 上游兼容探针
+        - MCP / 工具调用
+        - 部署 / 发布
+        - 文档 / 示例
+        - 其他
+    validations:
+      required: true

@@ -1,0 +1,99 @@
+{
+  "info": {
+    "name": "postman2api compatible API",
+    "description": "Smoke collection for the local postman2api OpenAI/Anthropic compatible API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:1930"
+    },
+    {
+      "key": "apiKey",
+      "value": "YOUR_API_KEY"
+    },
+    {
+      "key": "model",
+      "value": "auto"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      },
+      "response": []
+    },
+    {
+      "name": "Models",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/models"
+      },
+      "response": []
+    },
+    {
+      "name": "OpenAI Chat Completion",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"model\": \"{{model}}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with POSTMAN2API_OK only.\"\n    }\n  ],\n  \"stream\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/chat/completions"
+      },
+      "response": []
+    },
+    {
+      "name": "Anthropic Messages",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"model\": \"{{model}}\",\n  \"max_tokens\": 64,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with POSTMAN2API_OK only.\"\n    }\n  ],\n  \"stream\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/messages"
+      },
+      "response": []
+    }
+  ]
+}

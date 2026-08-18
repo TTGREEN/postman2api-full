@@ -1,0 +1,228 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "postman2api compatible API",
+    "version": "1.0.0",
+    "description": "OpenAI and Anthropic compatible endpoints backed by configured Postman accounts."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:1930",
+      "description": "Local default"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    },
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service status"
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "summary": "List compatible models",
+        "responses": {
+          "200": {
+            "description": "OpenAI-style model list"
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "summary": "OpenAI-compatible chat completions",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAIChatCompletionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion or SSE stream"
+          },
+          "401": {
+            "description": "Invalid API key"
+          }
+        }
+      }
+    },
+    "/v1/messages": {
+      "post": {
+        "summary": "Anthropic-compatible messages",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnthropicMessagesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Anthropic-compatible response or SSE stream"
+          },
+          "401": {
+            "description": "Invalid API key"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    },
+    "schemas": {
+      "ChatMessage": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool"
+            ]
+          },
+          "content": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool_call_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "OpenAIChatCompletionRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "examples": [
+              "auto",
+              "claude-sonnet-4-5"
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "tools": {
+            "type": "array",
+            "description": "Forwarded only when POSTMAN_OFFICIAL_MCP_ENABLED=true and upstream Postman MCP is configured."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional stable client session id for sticky account routing."
+          }
+        },
+        "additionalProperties": true
+      },
+      "AnthropicMessagesRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "messages"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "examples": [
+              "claude-sonnet-4-5"
+            ]
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Anthropic-style messages."
+          },
+          "system": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array"
+              }
+            ]
+          },
+          "max_tokens": {
+            "type": "integer"
+          },
+          "stream": {
+            "type": "boolean",
+            "default": false
+          },
+          "tools": {
+            "type": "array"
+          },
+          "metadata": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

@@ -15,7 +15,11 @@
     "browser:camoufox:fetch": "bun scripts/ops/install-camoufox.ts",
     "browser:camoufox:smoke": "bun scripts/smoke/camoufox-smoke.ts",
     "browser:camoufox:smoke:node": "node --import tsx scripts/smoke/camoufox-smoke.ts",
-    "browser:camoufox:smoke:postman": "node --experimental-strip-types scripts/smoke/camoufox-smoke.ts --postman-login"
+    "browser:camoufox:smoke:postman": "node --experimental-strip-types scripts/smoke/camoufox-smoke.ts --postman-login",
+    "audit:layout": "python scripts/ops/audit-project-layout.py .",
+    "validate:api": "bun scripts/ops/validate-api-artifacts.ts",
+    "smoke:upstream": "bun scripts/smoke/postman-upstream-compat-smoke.ts",
+    "ci:check": "bun run audit:layout && bun run validate:api && bun run typecheck && bun test tests/regressions.test.ts --timeout 30000"
   },
   "dependencies": {
     "camoufox-js": "0.12.0",

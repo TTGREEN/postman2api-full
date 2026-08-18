@@ -1,0 +1,62 @@
+name: Bug 报告
+description: 报告可复现的问题或上游兼容异常
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请不要上传 `.env`、Token、Cookie、数据库、日志全文或账号凭据。必要日志请先脱敏。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题概述
+      description: 用一两句话描述发生了什么。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 写出从启动服务到出现问题的步骤。
+      placeholder: |
+        1. 运行 ...
+        2. 打开 ...
+        3. 请求 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 只粘贴脱敏后的错误摘要。
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - OpenAI /v1/chat/completions
+        - Anthropic /v1/messages
+        - 账号管理
+        - Agent Mode / MCP
+        - 上游兼容 / quota
+        - 浏览器登录 / 注册自动化
+        - 部署 / 启动脚本
+        - 其他
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 安全确认
+      options:
+        - label: 我已确认没有提交 `.env`、Token、Cookie、数据库、日志全文或账号凭据。
+          required: true
