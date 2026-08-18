@@ -97,6 +97,13 @@ export async function testAccountAvailability(accountId: number): Promise<Accoun
       addLog("额度", quotaResult.error || "额度接口未返回可识别数据，将继续实际问答测试", "warn");
     }
 
+    const agentModeResult = await provider.ensureAiUserAgentMode(account);
+    if (agentModeResult.success) {
+      addLog("Agent Mode", agentModeResult.cached ? "ai_user_agent_mode 已确认开启（缓存）" : "已开启账号级 ai_user_agent_mode", "success");
+    } else {
+      addLog("Agent Mode", agentModeResult.error || "ai_user_agent_mode 开启失败，将继续实际问答测试", "warn");
+    }
+
     addLog("问题", ACCOUNT_TEST_PROMPT);
     addLog("请求", `使用模型 ${ACCOUNT_TEST_MODEL} 直连该账号，超时 ${ACCOUNT_TEST_TIMEOUT_MS / 1000} 秒`);
     leaseId = pool.trackRequestStart(account.id);

@@ -1,10 +1,10 @@
 import { createInterface } from "node:readline";
-import { CONFIG } from "../packages/postman-register/src/config.ts";
-import { launchBrowser } from "../packages/postman-register/src/core/browser.ts";
+import { CONFIG } from "../../packages/postman-register/src/config.ts";
+import { launchBrowser } from "../../packages/postman-register/src/core/browser.ts";
 import {
   acquireEmailAddress,
   getBlockingState,
-} from "../packages/postman-register/src/selectors/tempMail.ts";
+} from "../../packages/postman-register/src/selectors/tempMail.ts";
 
 function send(message: unknown): void {
   process.stdout.write(`TEMP_EMAIL_PREVIEW ${JSON.stringify(message)}\n`);

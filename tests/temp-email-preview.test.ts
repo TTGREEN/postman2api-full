@@ -176,6 +176,29 @@ describe("temporary email acquisition", () => {
     })).rejects.toThrow("页面被阻断");
     expect(reloads).toBe(0);
   });
+
+  test("does not reload or create another mailbox after a mailbox-creation quota error", async () => {
+    let reloads = 0;
+    const field = {
+      isVisible: async () => false,
+      inputValue: async () => "",
+      getAttribute: async () => null,
+      textContent: async () => null,
+    };
+    const page = {
+      locator: (selector: string) => selector === "body"
+        ? { innerText: async () => "Too many new mailboxes created. Upgrade to Premium or try again later." }
+        : { first: () => field },
+      reload: async () => { reloads += 1; },
+    };
+
+    await expect(acquireEmailAddress(page as never, {
+      attempts: 3,
+      attemptTimeout: 10,
+      backoffMs: 0,
+    })).rejects.toThrow("临时邮箱创建额度限制");
+    expect(reloads).toBe(0);
+  });
 });
 
 describe("temporary email preview session manager", () => {

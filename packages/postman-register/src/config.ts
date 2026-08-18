@@ -73,7 +73,7 @@ export const CONFIG = {
   count: resolveRegisterCount(),
   /** 账号 Token 保存目录（固定文件夹，可用 POSTMAN_TOKENS_DIR 覆盖）；每轮注册生成一个独立文件 */
   tokensDir: process.env.POSTMAN_TOKENS_DIR ?? "tokens",
-  headless: process.argv.includes("--headless"),
+  headless: process.argv.includes("--headless") || /^(1|true|yes)$/i.test(process.env.POSTMAN_HEADLESS ?? ""),
   /** 可选代理（POSTMAN_PROXY，如 "http://user:pass@host:port"）：被按 IP 限流（如 temp-mail「创建了太多的邮箱」）时换出口 IP */
   proxy: normalizeProxy(process.env.POSTMAN_PROXY),
   /** 是否让 camoufox 通过代理查询出口 IP 并同步 WebRTC/地理位置（POSTMAN_GEOIP=1；库内原生支持，无需额外扩展） */
@@ -109,7 +109,7 @@ export const CONFIG = {
     pageLoad: 600000,
   },
   browser: {
-    os: "macos" as const,
+    os: "windows" as const,
     locale: "zh-CN",
     fonts: ["Source Han Sans SC", "Hiragino Sans GB", "Heiti SC", "Arial Unicode MS"],
   },

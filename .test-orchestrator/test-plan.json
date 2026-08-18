@@ -21,9 +21,9 @@
       "test_id": "postman.unit-integration",
       "name": "Bun unit and integration suite",
       "framework": "bun",
-      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/run-unit-tests.ps1"],
+      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/ops/run-unit-tests.ps1"],
       "source_files": ["src/**/*.ts", "dashboard/src/**/*.ts", "dashboard/src/**/*.tsx"],
-      "test_files": ["tests/**/*.test.ts", "tests/postman-register-logic.test.ts", "package.json", "scripts/run-unit-tests.ps1"],
+      "test_files": ["tests/**/*.test.ts", "tests/postman-register-logic.test.ts", "package.json", "scripts/ops/run-unit-tests.ps1"],
       "depends_on_tests": []
     },
     {
@@ -49,7 +49,7 @@
       "name": "Registration package offline typecheck",
       "framework": "bun",
       "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "x", "tsc", "--noEmit", "-p", "packages/postman-register/tsconfig.json"],
-      "source_files": ["src/auth/**/*.ts", "scripts/postman-login-worker.ts", "packages/postman-register/src/**/*.ts"],
+      "source_files": ["src/auth/**/*.ts", "scripts/workers/postman-login-worker.ts", "packages/postman-register/src/**/*.ts"],
       "test_files": ["package.json", "packages/postman-register/package.json", "bun.lock"],
       "depends_on_tests": []
     },
@@ -57,8 +57,8 @@
       "test_id": "postman.camoufox-smoke",
       "name": "Camoufox local browser smoke test",
       "framework": "node",
-      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "scripts/camoufox-smoke.ts"],
-      "source_files": ["scripts/camoufox-smoke.ts", "src/auth/browser-launcher.ts"],
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "scripts/smoke/camoufox-smoke.ts"],
+      "source_files": ["scripts/smoke/camoufox-smoke.ts", "src/auth/browser-launcher.ts"],
       "test_files": ["package.json", "bun.lock"],
       "depends_on_tests": []
     },
@@ -66,31 +66,49 @@
       "test_id": "postman.temp-email-preview",
       "name": "Temporary email preview worker smoke",
       "framework": "node",
-      "command": ["C:\\Program Files\\nodejs\\node.exe", "--import", "tsx", "scripts/temp-email-preview-smoke.ts"],
-      "source_files": ["src/auth/temp-email-preview-runtime.ts", "scripts/temp-email-preview-worker.ts", "packages/postman-register/src/core/browser.ts", "packages/postman-register/src/selectors/tempMail.ts"],
-      "test_files": ["scripts/temp-email-preview-smoke.ts", "package.json", "bun.lock"],
+      "command": ["C:\\Program Files\\nodejs\\node.exe", "--import", "tsx", "scripts/smoke/temp-email-preview-smoke.ts"],
+      "source_files": ["src/auth/temp-email-preview-runtime.ts", "scripts/workers/temp-email-preview-worker.ts", "packages/postman-register/src/core/browser.ts", "packages/postman-register/src/selectors/tempMail.ts"],
+      "test_files": ["scripts/smoke/temp-email-preview-smoke.ts", "package.json", "bun.lock"],
       "depends_on_tests": []
     },
     {
       "test_id": "postman.health-runtime",
       "name": "Local service health endpoint",
       "framework": "powershell",
-      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/health-runtime-smoke.ps1"],
-      "source_files": ["src/index.ts", "src/config.ts", "scripts/health-runtime-smoke.ps1"],
-      "test_files": [".env.example", "scripts/health-runtime-smoke.ps1"],
+      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/ops/health-runtime-smoke.ps1"],
+      "source_files": ["src/index.ts", "src/config.ts", "scripts/ops/health-runtime-smoke.ps1"],
+      "test_files": [".env.example", "scripts/ops/health-runtime-smoke.ps1"],
       "depends_on_tests": ["postman.dashboard-build"]
     },
     {
       "test_id": "postman.temp-email-preview-e2e",
       "name": "Temporary email preview dashboard E2E",
       "framework": "playwright",
-      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/temp-email-preview-e2e.ps1"],
+      "command": ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/e2e/temp-email-preview-e2e.ps1"],
       "source_files": ["dashboard/src/App.tsx", "dashboard/src/index.css", "dashboard/src/lib/api.ts"],
-      "test_files": ["scripts/temp-email-preview-e2e.ts", "scripts/temp-email-preview-e2e.ps1", "package.json", "bun.lock"],
+      "test_files": ["scripts/e2e/temp-email-preview-e2e.ts", "scripts/e2e/temp-email-preview-e2e.ps1", "package.json", "bun.lock"],
       "depends_on_tests": ["postman.dashboard-build"],
       "evidence_globs": [
         {"type": "screenshot", "pattern": ".test-state/artifacts/temp-email-preview-e2e/*.png"}
       ]
+    },
+    {
+      "test_id": "postman.registration-runtime",
+      "name": "Persistent registration runtime contract",
+      "framework": "bun",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "test", "tests/registration-runtime.test.ts"],
+      "source_files": ["src/automation-lab/registration-runtime.ts", "src/automation-lab/registration-types.ts", "src/api/registration.ts", "src/auth/account-persistence.ts", "src/db/schema.ts", "src/db/index.ts", "scripts/registration-worker.ts"],
+      "test_files": ["tests/registration-runtime.test.ts", "package.json"],
+      "depends_on_tests": []
+    },
+    {
+      "test_id": "postman.registration-worker-smoke",
+      "name": "Node registration worker synthetic smoke",
+      "framework": "bun",
+      "command": ["C:\\Users\\Administrator\\AppData\\Roaming\\npm\\node_modules\\bun\\bin\\bun.exe", "scripts/smoke/registration-worker-smoke.ts"],
+      "source_files": ["scripts/workers/registration-worker.ts", "src/automation-lab/registration-runtime.ts", "packages/postman-register/src/**/*.ts"],
+      "test_files": ["scripts/smoke/registration-worker-smoke.ts", "package.json"],
+      "depends_on_tests": ["postman.registration-runtime"]
     }
   ],
   "dependencies": {
@@ -99,18 +117,31 @@
       "dashboard/src/**/*.tsx": ["postman.typecheck", "postman.dashboard-build"],
       "packages/postman-register/src/**/*.ts": ["postman.typecheck", "postman.register-demo"],
       "packages/postman-register/src/selectors/postman.ts": ["postman.unit-integration", "postman.register-demo"],
+      "packages/postman-register/src/core/turnstileDiagnostics.ts": ["postman.typecheck", "postman.unit-integration", "postman.register-demo"],
       "packages/postman-register/src/steps/verify.ts": ["postman.unit-integration", "postman.register-demo"],
       "src/auth/postman-login-runtime.ts": ["postman.unit-integration", "postman.register-demo"],
-      "scripts/postman-login-worker.ts": ["postman.register-demo"],
-      "scripts/camoufox-smoke.ts": ["postman.camoufox-smoke"],
+      "scripts/workers/postman-login-worker.ts": ["postman.register-demo"],
+      "scripts/smoke/camoufox-smoke.ts": ["postman.camoufox-smoke"],
       "src/auth/temp-email-preview-runtime.ts": ["postman.unit-integration", "postman.temp-email-preview"],
-      "scripts/temp-email-preview-worker.ts": ["postman.temp-email-preview"],
-      "scripts/temp-email-preview-smoke.ts": ["postman.temp-email-preview"],
+      "scripts/workers/temp-email-preview-worker.ts": ["postman.temp-email-preview"],
+      "scripts/smoke/temp-email-preview-smoke.ts": ["postman.temp-email-preview"],
       "dashboard/src/App.tsx": ["postman.temp-email-preview-e2e"],
       "dashboard/src/index.css": ["postman.temp-email-preview-e2e"],
       "dashboard/src/lib/api.ts": ["postman.temp-email-preview-e2e"],
-      "scripts/temp-email-preview-e2e.ts": ["postman.temp-email-preview-e2e"],
-      "scripts/temp-email-preview-e2e.ps1": ["postman.temp-email-preview-e2e"]
+      "scripts/e2e/temp-email-preview-e2e.ts": ["postman.temp-email-preview-e2e"],
+      "scripts/e2e/temp-email-preview-e2e.ps1": ["postman.temp-email-preview-e2e"],
+      "src/automation-lab/**/*.ts": ["postman.typecheck", "postman.unit-integration"],
+      "dashboard/src/components/AutomationLab.tsx": ["postman.typecheck", "postman.dashboard-build"],
+      "dashboard/src/lib/registration-jobs.ts": ["postman.typecheck", "postman.dashboard-build"],
+      "tests/registration-job-view.test.ts": ["postman.unit-integration"],
+      "scripts/workers/registration-worker.ts": ["postman.registration-worker-smoke"],
+      "scripts/smoke/registration-worker-smoke.ts": ["postman.registration-worker-smoke"],
+      "src/automation-lab/registration-runtime.ts": ["postman.typecheck", "postman.unit-integration", "postman.registration-runtime", "postman.registration-worker-smoke"],
+      "src/api/registration.ts": ["postman.typecheck", "postman.unit-integration", "postman.registration-runtime"],
+      "src/auth/account-persistence.ts": ["postman.typecheck", "postman.unit-integration", "postman.registration-runtime"],
+      "src/db/schema.ts": ["postman.typecheck", "postman.unit-integration", "postman.registration-runtime"],
+      "src/db/index.ts": ["postman.typecheck", "postman.unit-integration", "postman.registration-runtime"],
+      "tests/registration-runtime.test.ts": ["postman.registration-runtime"]
     },
     "symbol_rules": {},
     "file_dependencies": {}

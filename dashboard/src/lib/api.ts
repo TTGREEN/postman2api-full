@@ -8,11 +8,27 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
       ...(options?.headers || {}),
     },
   });
-  if (!res.ok) {
-    const body: any = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
+  const responseText = await res.text();
+  let body: unknown;
+
+  if (responseText) {
+    try {
+      body = JSON.parse(responseText);
+    } catch {
+      const contentType = res.headers.get("Content-Type") || "未声明 Content-Type";
+      throw new Error(
+        `接口 ${path} 返回了非 JSON 响应（HTTP ${res.status}）。响应类型：${contentType}。请确认本地后端已重启并加载当前版本。`,
+      );
+    }
   }
-  return res.json() as Promise<T>;
+
+  if (!res.ok) {
+    const error = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+      ? body.error
+      : `HTTP ${res.status}`;
+    throw new Error(error);
+  }
+  return body as T;
 }
 
 export interface Account {
@@ -87,6 +103,77 @@ export async function fetchAccounts(): Promise<{ data: Account[] }> {
   return api("/api/accounts");
 }
 
+export type RegistrationJobMode = "upstream";
+export type RegistrationJobStatus = "queued" | "running" | "success" | "failed" | "stopped";
+export interface RegistrationJobAttempt {
+  index: number;
+  status: "pending" | "running" | "success" | "failed" | "stopped";
+  attempts: number;
+  stage?: string;
+  email?: string;
+  accountId?: number;
+  error?: string;
+}
+export interface RegistrationJobEvent {
+  jobId: string;
+  seq?: number;
+  type: string;
+  status?: string;
+  index?: number;
+  stage?: string;
+  message: string;
+  level?: "info" | "success" | "warn" | "error";
+  ts: number;
+  payload?: Record<string, unknown>;
+}
+export interface RegistrationJobSnapshot {
+  id: string;
+  kind: "registration";
+  target: string;
+  mode: RegistrationJobMode;
+  status: RegistrationJobStatus;
+  requested: number;
+  completed: number;
+  retryLimit: number;
+  attempts: RegistrationJobAttempt[];
+  events: RegistrationJobEvent[];
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
+export async function fetchRegistrationJobs(options: { mode?: RegistrationJobMode; limit?: number } = {}): Promise<{ data: RegistrationJobSnapshot[] }> {
+  const params = new URLSearchParams();
+  if (options.mode) params.set("mode", options.mode);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const query = params.toString();
+  return api(`/api/registration${query ? `?${query}` : ""}`);
+}
+
+export async function fetchRegistrationJob(id: string): Promise<RegistrationJobSnapshot> {
+  return api(`/api/registration/${encodeURIComponent(id)}`);
+}
+
+export async function startRegistrationJob(input: {
+  target: string;
+  count: number;
+  retryLimit: number;
+  mode: RegistrationJobMode;
+  headless?: boolean;
+}): Promise<RegistrationJobSnapshot> {
+  return api("/api/registration", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function stopRegistrationJob(id: string): Promise<RegistrationJobSnapshot> {
+  return api(`/api/registration/${encodeURIComponent(id)}/stop`, { method: "POST" });
+}
+
+export async function retryRegistrationJob(id: string): Promise<RegistrationJobSnapshot> {
+  return api(`/api/registration/${encodeURIComponent(id)}/retry`, { method: "POST" });
+}
+
 export async function loginAccount(
   email: string,
   flow: "login" | "signup" = "login",
@@ -153,6 +240,10 @@ export async function toggleAccount(id: number, enabled: boolean): Promise<{ suc
 
 export async function fetchStats(): Promise<{ data: Stats }> {
   return api("/api/stats");
+}
+
+export async function resetStats(): Promise<{ success: boolean; deletedRequestLogs: number }> {
+  return api("/api/stats/reset", { method: "POST" });
 }
 
 export async function fetchSettings(): Promise<{ data: Record<string, string> }> {

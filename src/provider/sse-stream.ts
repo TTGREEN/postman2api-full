@@ -34,10 +34,24 @@ const QUOTA_ERROR_PATTERNS = [
   "enable pay as you go",
 ];
 
+const AGENT_MODE_ERROR_PATTERNS = [
+  "input_validation_error: forbidden",
+  "ai_user_agent_mode",
+  "agent mode is disabled",
+  "agent mode access is disabled",
+];
+
 export function isPostmanQuotaExceeded(value: unknown): boolean {
   const text = typeof value === "string" ? value : safeStringify(value);
   const normalized = text.toLowerCase();
   return QUOTA_ERROR_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+export function isPostmanAgentModeUnavailable(value: unknown): boolean {
+  const text = typeof value === "string" ? value : safeStringify(value);
+  const normalized = text.toLowerCase();
+  return AGENT_MODE_ERROR_PATTERNS.some((pattern) => normalized.includes(pattern))
+    || (normalized.includes("input_validation_error") && normalized.includes("forbidden"));
 }
 
 export class PostmanStreamReader {
@@ -78,6 +92,11 @@ export class PostmanStreamReader {
     this._sawEvent = true;
 
     const eventType = String(event.eventType || event.type || "");
+    if (!eventType && typeof event.result === "string") {
+      if (/fail|error/i.test(event.result)) return this.handleFailure(event);
+      if (typeof event.message === "string" && event.message.length > 0) return [{ content: event.message }];
+    }
+
     switch (eventType) {
       case "usage":
         return this.handleUsage(event.data);
@@ -211,9 +230,12 @@ export class PostmanStreamReader {
 
   private handleFailure(data: any): PostmanDelta[] {
     this._error = extractFailureMessage(data);
-    this._retryableError = this._error === "Unknown Postman error";
+    const agentModeUnavailable = isPostmanAgentModeUnavailable(data) || isPostmanAgentModeUnavailable(this._error);
+    this._retryableError = this._error === "Unknown Postman error" || agentModeUnavailable;
     if (this._retryableError) {
-      this._error = "Postman AI access is not ready for this team yet. Confirm that organization AI access is enabled, then retry shortly.";
+      this._error = agentModeUnavailable
+        ? "Postman Agent Mode is not enabled for this account yet. Enable ai_user_agent_mode and retry shortly."
+        : "Postman AI access is not ready for this team yet. Confirm that organization AI access is enabled, then retry shortly.";
     }
     if (isPostmanQuotaExceeded(data) || isPostmanQuotaExceeded(this._error)) {
       this._quotaExceeded = true;
@@ -237,6 +259,10 @@ function extractFailureMessage(value: unknown): string {
   if (!value || typeof value !== "object") return "Unknown Postman error";
 
   const data = value as Record<string, unknown>;
+  const code = firstString(data.errorType, data.code, data.name);
+  const directMessage = firstString(data.userMessage, data.message, data.detail, data.reason);
+  if (code && directMessage && code !== directMessage && code.toUpperCase() === "INPUT_VALIDATION_ERROR") return `${code}: ${directMessage}`;
+  if (directMessage) return directMessage;
   for (const key of ["userMessage", "message", "detail", "reason"]) {
     const candidate = data[key];
     if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
@@ -253,6 +279,13 @@ function extractFailureMessage(value: unknown): string {
     if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
   }
   return "Unknown Postman error";
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 function safeStringify(value: unknown): string {

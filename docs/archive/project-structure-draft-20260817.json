@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "note": "Draft only. Review before copying to .project-structure.json and enabling layout audit.",
+  "root_files": [
+    "AGENTS.md",
+    ".env.example",
+    ".gitignore",
+    "bun.lock",
+    "package.json",
+    "README.md",
+    "tsconfig.json"
+  ],
+  "root_file_patterns": [],
+  "top_level_directories": {
+    ".test-orchestrator": "Tracked state-aware test orchestration plan and repository-wide test selection contract.",
+    "dashboard": "Frontend React/Vite dashboard application, including UI source, frontend package manifest, and frontend build configuration.",
+    "docs": "Durable documentation, architecture notes, runbooks, project organization plans, and user-facing technical references.",
+    "examples": "Sanitized runnable examples and non-production reference integrations.",
+    "packages": "Private reusable packages and independently testable automation subpackages consumed by the host application.",
+    "scripts": "Repository automation, worker entry points, smoke checks, E2E wrappers, installation helpers, and release/deployment helpers.",
+    "src": "Canonical backend application source: API routes, auth, proxy, providers, database, runtime automation orchestration, and WebSocket server.",
+    "tests": "Repository-level automated tests and sanitized fixtures for backend, frontend logic, automation runtime, and integration behavior.",
+    "runtime": "Ignored local browser runtime assets. Not canonical source; may be copied into release artifacts only by an approved release script with manifest evidence."
+  },
+  "ignored_paths": [
+    ".git/",
+    ".test-state/",
+    "node_modules/",
+    "dashboard/node_modules/",
+    "dashboard/dist/",
+    "data/",
+    "runtime/",
+    "tokens/",
+    "tokens copy/",
+    ".workbuddy/",
+    ".playwright-cli/",
+    "*.db",
+    "*.db-wal",
+    "*.db-shm",
+    "*.log",
+    ".env",
+    ".env.*"
+  ],
+  "placement": {
+    "source_roots": [
+      "src",
+      "dashboard/src",
+      "packages/postman-register/src"
+    ],
+    "test_roots": [
+      "tests"
+    ],
+    "script_roots": [
+      "scripts"
+    ],
+    "documentation_roots": [
+      "docs",
+      "packages/postman-register/README.md",
+      "README.md"
+    ],
+    "generated_roots": [
+      "dashboard/dist",
+      "data",
+      "runtime",
+      ".test-state"
+    ],
+    "allow_colocated_tests": false
+  },
+  "policies": {
+    "forbid_parallel_source_trees": [
+      "development",
+      "complete",
+      "dev",
+      "full",
+      "开发版",
+      "完整版"
+    ],
+    "forbid_temporary_files": true,
+    "secrets_policy": "Do not track or package .env, .env.* except .env.example, tokens, cookies, SQLite operational databases, or account credential artifacts.",
+    "release_policy": "Release artifacts must be generated from a verified commit. Exclude credentials, local databases, dependencies, test state, and editor state. runtime/ browser assets may be included only as scripted release assets with source, size, checksum, and verification recorded in the release manifest.",
+    "synthetic_automation_policy": "The old local synthetic automation lab UI/API is approved for later removal. Test-only simulation must live as test fixtures/adapters, not product UI or public runtime routes.",
+    "postman_register_package_policy": "packages/postman-register remains an independent private package. Host integration should prefer package-level exports or a narrow adapter over deep imports from many package internals."
+  },
+  "file_rules": [
+    {
+      "name": "PowerShell operator scripts",
+      "patterns": [
+        "*.ps1"
+      ],
+      "allowed_roots": [
+        "scripts"
+      ]
+    },
+    {
+      "name": "TypeScript tests",
+      "patterns": [
+        "*.test.ts",
+        "*.test.tsx"
+      ],
+      "allowed_roots": [
+        "tests"
+      ]
+    },
+    {
+      "name": "Markdown documentation",
+      "patterns": [
+        "*.md"
+      ],
+      "allowed_roots": [
+        "docs",
+        "packages",
+        ".",
+        "examples"
+      ]
+    }
+  ],
+  "planned_refinements": [
+    "Consider splitting scripts into scripts/workers, scripts/smoke, scripts/e2e, scripts/labs, and scripts/ops after path references are audited.",
+    "Consider splitting dashboard/src/App.tsx into page components and layout/state modules.",
+    "Consider splitting packages/postman-register/src/selectors/postman.ts into signup, verify, turnstile, onboarding, upgrade, and AI settings selector modules.",
+    "Consider exposing a package-level API from packages/postman-register instead of importing many internal src paths from host runtime.",
+    "Remove the old synthetic automation lab product UI/API in a later phase; preserve any required simulation only as test fixtures/adapters.",
+    "Add release packaging support for optional runtime/ browser assets with manifest checksums, while keeping runtime/ ignored in source control.",
+    "Keep packages/postman-register as an independent package and introduce package-level exports or a narrow host adapter before deep-import cleanup."
+  ]
+}

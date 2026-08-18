@@ -55,8 +55,45 @@ export const sessionStates = sqliteTable("session_states", {
   index("session_states_account_idx").on(table.accountId),
 ]);
 
+export const automationJobs = sqliteTable("automation_jobs", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull().default("registration"),
+  mode: text("mode").notNull().default("upstream"),
+  target: text("target").notNull(),
+  status: text("status").notNull().default("queued"),
+  requested: integer("requested").notNull(),
+  completed: integer("completed").notNull().default(0),
+  retryLimit: integer("retry_limit").notNull().default(1),
+  input: text("input").notNull(),
+  result: text("result"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  finishedAt: integer("finished_at", { mode: "timestamp" }),
+}, (table) => [
+  index("automation_jobs_status_updated_at_idx").on(table.status, table.updatedAt),
+]);
+
+export const automationJobEvents = sqliteTable("automation_job_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  jobId: text("job_id").notNull().references(() => automationJobs.id),
+  seq: integer("seq").notNull(),
+  type: text("type").notNull(),
+  stage: text("stage"),
+  attemptIndex: integer("attempt_index"),
+  level: text("level").notNull().default("info"),
+  message: text("message").notNull(),
+  payload: text("payload"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+}, (table) => [
+  index("automation_job_events_job_seq_idx").on(table.jobId, table.seq),
+]);
+
 export type Account = typeof accounts.$inferSelect;
 export type NewAccount = typeof accounts.$inferInsert;
 export type RequestLog = typeof requestLogs.$inferSelect;
 export type NewRequestLog = typeof requestLogs.$inferInsert;
 export type SessionState = typeof sessionStates.$inferSelect;
+export type AutomationJob = typeof automationJobs.$inferSelect;
+export type AutomationJobEvent = typeof automationJobEvents.$inferSelect;

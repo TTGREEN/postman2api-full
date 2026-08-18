@@ -103,7 +103,8 @@ export async function collectAccountToken(page: Page, email: string, password: s
         credentials: "include",
       });
       if (!res.ok) throw new Error(`Handshake HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await res.json() as { token?: string };
+      if (!data.token) throw new Error("Handshake response did not include token");
       const part = data.token
         .split(".")[1]
         .replace(/-/g, "+")

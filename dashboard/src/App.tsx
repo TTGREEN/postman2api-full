@@ -2,12 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   fetchAccounts,
   fetchStats,
+  resetStats,
   fetchSettings,
   loginAccount,
   confirmSignup,
-  previewTempEmail,
-  openTempEmailPreview,
-  closeTempEmailPreview,
   deleteAccount,
   testAccount,
   warmupAccount,
@@ -19,15 +17,8 @@ import {
   type AccountTestResult,
   type Stats,
 } from "./lib/api";
-
-type Tab = "accounts" | "stats" | "settings";
-
-interface LoginLogEntry {
-  step: string;
-  msg: string;
-  level: string;
-  ts: number;
-}
+import { AutomationLab } from "./components/AutomationLab";
+import { AccountTestLogPanel, Header, LoginLogPanel, Toast, type LoginLogEntry, type Tab } from "./components/AppChrome";
 
 const STATUS_LABEL: Record<string, string> = {
   active: "正常",
@@ -77,141 +68,11 @@ export default function App() {
             onLoginEnd={onLoginEnd}
           />
         )}
-        {tab === "stats" && <StatsTab />}
+        {tab === "stats" && <StatsTab showToast={showToast} />}
         {tab === "settings" && <SettingsTab showToast={showToast} />}
+        {tab === "automation-lab" && <AutomationLab />}
       </main>
     </>
-  );
-}
-
-function Header({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
-  return (
-    <header className="admin-header">
-      <div className="admin-header-inner">
-        <div className="admin-brand-wrap">
-          <span className="admin-brand">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="4" width="20" height="16" rx="2" />
-              <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
-            </svg>
-            postman2api
-          </span>
-        </div>
-        <nav className="admin-nav">
-          {(["accounts", "stats", "settings"] as Tab[]).map((t) => (
-            <button key={t} className={`admin-nav-link ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-              {t === "accounts" ? "账号" : t === "stats" ? "统计" : "设置"}
-            </button>
-          ))}
-        </nav>
-        <div className="admin-header-right">
-          <span className="admin-header-version">v1.0</span>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function Toast({ msg, type }: { msg: string; type: "success" | "error" | "info" }) {
-  const icon =
-    type === "success" ? (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-        <polyline points="20 6 9 17 4 12" />
-      </svg>
-    ) : type === "error" ? (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-        <line x1="18" y1="6" x2="6" y2="18" />
-        <line x1="6" y1="6" x2="18" y2="18" />
-      </svg>
-    ) : (
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 8v4" />
-        <path d="M12 16h.01" />
-      </svg>
-    );
-  return (
-    <div className="toast-container">
-      <div className={`toast toast-${type}`}>
-        <div className="toast-icon">{icon}</div>
-        <div className="toast-content">{msg}</div>
-      </div>
-    </div>
-  );
-}
-
-function LoginLogPanel({ logs, onClose }: { logs: LoginLogEntry[]; onClose: () => void }) {
-  const logEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [logs]);
-
-  return (
-    <div className="login-log-overlay">
-      <div className="login-log-panel">
-        <div className="login-log-header">
-          <div className="login-log-title">
-            <span className="live-dot">账号接入进度</span>
-          </div>
-          <button className="login-log-close" onClick={onClose} title="关闭">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-        <div className="login-log-body">
-          {logs.map((log, i) => (
-            <div key={i} className={`login-log-line login-log-${log.level}`}>
-              <span className="login-log-time">{new Date(log.ts * 1000).toLocaleTimeString("zh-CN")}</span>
-              <span className="login-log-step">[{log.step}]</span>
-              <span className="login-log-msg">{log.msg}</span>
-            </div>
-          ))}
-          <div ref={logEndRef} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AccountTestLogPanel({ result, onClose }: { result: AccountTestResult; onClose: () => void }) {
-  return (
-    <div className="login-log-overlay account-test-log-overlay">
-      <div className="login-log-panel">
-        <div className="login-log-header">
-          <div className="login-log-title">
-            <span>账号测试日志</span>
-            <span className={`test-log-status ${result.available ? "is-success" : "is-error"}`}>
-              {result.available ? "可用" : "不可用"}
-            </span>
-          </div>
-          <button className="login-log-close" onClick={onClose} title="关闭">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-        <div className="test-log-summary">
-          <div><span>账号</span><strong>{result.email || `#${result.accountId}`}</strong></div>
-          <div><span>模型</span><strong>{result.model}</strong></div>
-          <div><span>耗时</span><strong>{result.durationMs} ms</strong></div>
-          <div className="test-log-prompt"><span>测试问题</span><code>{result.prompt}</code></div>
-          <div className="test-log-notice">该测试会向 Postman Agent 发送一次真实请求，并消耗少量额度。</div>
-        </div>
-        <div className="login-log-body test-log-body">
-          {result.logs.map((log, i) => (
-            <div key={`${log.ts}-${i}`} className={`login-log-line login-log-${log.level}`}>
-              <span className="login-log-time">+{log.elapsedMs}ms</span>
-              <span className="login-log-step">[{log.step}]</span>
-              <span className="login-log-msg">{log.message}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -229,7 +90,7 @@ function AccountsTab({
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [addMode, setAddMode] = useState<"login" | "signup" | "automated" | "import">("login");
+  const [addMode, setAddMode] = useState<"login" | "signup" | "import">("login");
   const [filter, setFilter] = useState("all");
   const [confirm, setConfirm] = useState<{ msg: string; action: () => void } | null>(null);
   const [warming, setWarming] = useState<Set<number>>(new Set());
@@ -652,6 +513,7 @@ function AccountsTab({
             ) : (
               filtered.map((a) => {
                 const displayStatus = getAccountDisplayStatus(a);
+                const isDisabled = !a.enabled;
                 const isWarming = warming.has(a.id);
                 const isTesting = testing.has(a.id);
                 const testResult = testResults[a.id];
@@ -782,8 +644,8 @@ function AddAccountModal({
   showToast,
   onLoginStart,
 }: {
-  mode: "login" | "signup" | "automated" | "import";
-  setMode: (m: "login" | "signup" | "automated" | "import") => void;
+  mode: "login" | "signup" | "import";
+  setMode: (m: "login" | "signup" | "import") => void;
   onClose: () => void;
   onDone: () => void;
   onRefresh: () => void;
@@ -791,77 +653,15 @@ function AddAccountModal({
   onLoginStart: (confirmationId?: string) => void;
 }) {
   const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
   const [tokens, setTokens] = useState("");
   const [loading, setLoading] = useState(false);
   const [importResult, setImportResult] = useState<AccountImportResponse | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [confirmationId, setConfirmationId] = useState<string | null>(null);
   const [confirmationState, setConfirmationState] = useState<"idle" | "sending" | "sent">("idle");
-  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false);
-  const [emailPreviewSession, setEmailPreviewSession] = useState<{ sessionId: string; expiresAt: number } | null>(null);
-  const emailPreviewSessionRef = useRef<string | null>(null);
-
-  useEffect(() => () => {
-    const sessionId = emailPreviewSessionRef.current;
-    emailPreviewSessionRef.current = null;
-    if (sessionId) void closeTempEmailPreview(sessionId).catch(() => undefined);
-  }, []);
-
-  const closeEmailPreview = async (showMessage = true) => {
-    const sessionId = emailPreviewSession?.sessionId;
-    emailPreviewSessionRef.current = null;
-    setEmailPreviewSession(null);
-    if (!sessionId) return;
-    try {
-      await closeTempEmailPreview(sessionId);
-      if (showMessage) showToast("临时邮箱窗口已关闭", "info");
-    } catch (e: any) {
-      if (showMessage) showToast("关闭临时邮箱失败：" + e.message, "error");
-    }
-  };
-
-  const openEmailPreview = async () => {
-    const sessionId = emailPreviewSession?.sessionId;
-    if (!sessionId || emailPreviewLoading || loading) return;
-    setEmailPreviewLoading(true);
-    try {
-      await openTempEmailPreview(sessionId);
-      showToast("已刷新并唤起原临时邮箱窗口，请手动查看收件箱", "info");
-    } catch (e: any) {
-      emailPreviewSessionRef.current = null;
-      setEmailPreviewSession(null);
-      showToast("临时邮箱会话已失效，请重新获取：" + e.message, "error");
-    } finally {
-      setEmailPreviewLoading(false);
-    }
-  };
-
-  const fetchEmailPreview = async () => {
-    if (emailPreviewLoading || loading) return;
-    setEmailPreviewLoading(true);
-    try {
-      const result = await previewTempEmail();
-      setEmail(result.email);
-      emailPreviewSessionRef.current = result.sessionId;
-      setEmailPreviewSession({ sessionId: result.sessionId, expiresAt: result.expiresAt });
-      showToast("测试邮箱已回填，临时邮箱窗口会保留 10 分钟", "success");
-    } catch (e: any) {
-      showToast("获取测试邮箱失败：" + e.message, "error");
-    } finally {
-      setEmailPreviewLoading(false);
-    }
-  };
-
-  const changeEmail = (value: string) => {
-    if (emailPreviewSession && value !== email) void closeEmailPreview(false);
-    setEmail(value);
-  };
 
   const closeModal = () => {
     if (loading) return;
-    void closeEmailPreview(false);
     onClose();
   };
 
@@ -927,7 +727,7 @@ function AddAccountModal({
     setLoading(true);
     try {
       if (mode !== "import") {
-        const isSignup = mode === "signup" || mode === "automated";
+        const isSignup = mode === "signup";
         const nextConfirmationId = isSignup ? crypto.randomUUID() : undefined;
         setConfirmationId(nextConfirmationId || null);
         setConfirmationState("idle");
@@ -936,7 +736,6 @@ function AddAccountModal({
           email.trim(),
           isSignup ? "signup" : "login",
           nextConfirmationId,
-          mode === "automated" ? { username: username.trim() || undefined, password } : undefined,
         );
         showToast(isSignup ? "注册完成，账号已自动导入账号池" : "浏览器登录完成，账号已添加", "success");
       } else {
@@ -979,9 +778,6 @@ function AddAccountModal({
           <button className={`filter-chip ${mode === "signup" ? "active" : ""}`} onClick={() => setMode("signup")}>
             注册与首次设置
           </button>
-          <button className={`filter-chip ${mode === "automated" ? "active" : ""}`} onClick={() => setMode("automated")}>
-            自动化注册
-          </button>
           <button className={`filter-chip ${mode === "import" ? "active" : ""}`} onClick={() => { setMode("import"); setImportResult(null); }}>
             JSON 导入
           </button>
@@ -990,64 +786,8 @@ function AddAccountModal({
           {mode !== "import" && (
             <div className="dialog-field">
               <span className="dialog-label">邮箱</span>
-              <input className="input" value={email} onChange={(e) => changeEmail(e.target.value)} placeholder="user@example.com" />
-              {mode === "automated" && (
-                emailPreviewSession ? (
-                  <div className="email-preview-actions">
-                    <button
-                      type="button"
-                      className="dialog-btn email-preview-btn"
-                      disabled={emailPreviewLoading}
-                      onClick={openEmailPreview}
-                    >
-                      {emailPreviewLoading ? "唤起中..." : "打开收件箱"}
-                    </button>
-                    <button
-                      type="button"
-                      className="dialog-btn email-preview-close-btn"
-                      disabled={emailPreviewLoading}
-                      onClick={() => { void closeEmailPreview(); }}
-                    >
-                      关闭
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className="dialog-btn email-preview-btn"
-                    disabled={loading || emailPreviewLoading}
-                    onClick={fetchEmailPreview}
-                  >
-                    {emailPreviewLoading ? "获取中..." : "获取测试邮箱"}
-                  </button>
-                )
-              )}
+              <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@example.com" />
             </div>
-          )}
-          {mode === "automated" && (
-            <>
-              <div className="dialog-field">
-                <span className="dialog-label">用户名</span>
-                <input
-                  className="input"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="可选，默认使用邮箱前缀"
-                  autoComplete="username"
-                />
-              </div>
-              <div className="dialog-field">
-                <span className="dialog-label">密码</span>
-                <input
-                  className="input"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="至少 8 个字符"
-                  autoComplete="new-password"
-                />
-              </div>
-            </>
           )}
           {mode === "login" ? (
             <div className="dialog-help">
@@ -1063,21 +803,6 @@ function AddAccountModal({
                 <li>由有权限的用户开启 Team AI。</li>
               </ol>
               <div className="signup-warning">不提供临时邮箱轮换、验证码抓取、批量领取试用、自动付款或自动变更团队权限。</div>
-            </div>
-          ) : mode === "automated" ? (
-            <div className="signup-guide">
-              {emailPreviewSession && (
-                <div className="email-preview-status">
-                  临时邮箱会话已保留。收到邮件后点击“打开收件箱”手动查看验证码；系统不会读取邮件内容。
-                </div>
-              )}
-              <div className="dialog-help">Camoufox 会自动填写注册表单并推进普通首次设置。遇到以下步骤时会暂停，完成后回到此弹窗点击“完成确认”：</div>
-              <ol className="signup-steps">
-                <li>手动完成邮箱验证码和 CAPTCHA。</li>
-                <li>手动确认任何协议、套餐、试用或付费操作。</li>
-                <li>由有权限的用户手动开启 Team AI。</li>
-              </ol>
-              <div className="signup-warning">密码仅用于当前浏览器注册，不会写入数据库、日志或 WebSocket 消息。一次只允许一个注册任务。</div>
             </div>
           ) : (
             <div className="import-section">
@@ -1144,7 +869,7 @@ function AddAccountModal({
             </div>
           )}
         </div>
-        {(mode === "signup" || mode === "automated") && loading && confirmationId && (
+        {mode === "signup" && loading && confirmationId && (
           <div className="signup-confirm-row">
             <span>确认注册、资料、套餐与 Team AI 均已完成。</span>
             <button
@@ -1160,12 +885,12 @@ function AddAccountModal({
           <button className="dialog-btn" disabled={loading} onClick={closeModal}>{mode === "import" && importResult ? "完成" : "取消"}</button>
           <button
             className="dialog-btn dialog-btn-primary"
-            disabled={loading || emailPreviewLoading || (mode === "import" ? (!tokens.trim() && selectedFiles.length === 0) : !email.trim()) || (mode === "automated" && password.length < 8)}
+            disabled={loading || (mode === "import" ? (!tokens.trim() && selectedFiles.length === 0) : !email.trim())}
             onClick={submit}
           >
             {loading
-              ? (mode === "import" ? "导入中..." : mode === "signup" || mode === "automated" ? "等待注册设置..." : "等待登录...")
-              : mode === "import" ? "导入账号" : mode === "automated" ? "开始自动化注册" : mode === "signup" ? "打开注册浏览器" : "打开登录浏览器"}
+              ? (mode === "import" ? "导入中..." : mode === "signup" ? "等待注册设置..." : "等待登录...")
+              : mode === "import" ? "导入账号" : mode === "signup" ? "打开注册浏览器" : "打开登录浏览器"}
           </button>
         </div>
       </div>
@@ -1217,15 +942,32 @@ function ConfirmModal({
   );
 }
 
-function StatsTab() {
+function StatsTab({ showToast }: { showToast: (msg: string, type?: "success" | "error" | "info") => void }) {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const loadStats = useCallback(() => fetchStats().then((r) => setStats(r.data)), []);
 
   useEffect(() => {
-    const get = () => fetchStats().then((r) => setStats(r.data));
-    get();
-    const interval = setInterval(get, 5000);
+    loadStats().catch(() => undefined);
+    const interval = setInterval(() => loadStats().catch(() => undefined), 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loadStats]);
+
+  const handleReset = async () => {
+    setResetting(true);
+    try {
+      const result = await resetStats();
+      await loadStats();
+      setConfirmReset(false);
+      showToast(`统计已清空：删除 ${result.deletedRequestLogs} 条请求记录`, "success");
+    } catch (e: any) {
+      showToast("清空统计失败：" + e.message, "error");
+    } finally {
+      setResetting(false);
+    }
+  };
 
   if (!stats) return <div className="empty-state">加载中...</div>;
 
@@ -1238,6 +980,14 @@ function StatsTab() {
         </div>
         <div className="page-actions">
           <span className="live-dot">每 5 秒自动刷新</span>
+          <button
+            className="page-action-btn page-action-btn-danger"
+            onClick={() => setConfirmReset(true)}
+            disabled={resetting || stats.totalRequests === 0}
+            title="只清空请求统计和最近请求记录，不影响账号、任务历史、数据库文件或 .env"
+          >
+            清空统计
+          </button>
         </div>
       </div>
 
@@ -1358,6 +1108,14 @@ function StatsTab() {
             </table>
           </div>
         </>
+      )}
+      {confirmReset && (
+        <ConfirmModal
+          title="清空请求统计？"
+          body="这只会清空请求日志、Token 统计和最近请求列表；不会删除账号、任务历史、数据库文件或 .env。"
+          onCancel={() => setConfirmReset(false)}
+          onConfirm={handleReset}
+        />
       )}
     </>
   );

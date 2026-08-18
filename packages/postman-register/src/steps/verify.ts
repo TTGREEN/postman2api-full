@@ -1,4 +1,4 @@
-import { sleep } from "bun";
+import { sleep } from "../core/sleep";
 import { mkdir, writeFile } from "node:fs/promises";
 import { CONFIG } from "../config";
 import type { StepContext } from "../types";
@@ -132,8 +132,27 @@ export async function runVerify(ctx: StepContext): Promise<void> {
     CONFIG.timeouts.short,
   );
   if (verifyButton) {
-    await verifyButton.click();
-    log.info("已点击验证按钮，提交验证码");
+    const urlBeforeSubmit = tab.url();
+    try {
+      await verifyButton.click({ timeout: CONFIG.timeouts.short });
+      log.info("已点击验证按钮，提交验证码");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(`验证按钮点击未完成（${message.slice(0, 240)}），先检查提交后 CAPTCHA 再重试`);
+      await ps.waitForPostSubmitChallenge(tab, Math.min(CONFIG.timeouts.short, 8000));
+      const otpStillVisible = await ps.verificationPageReady(tab).catch(() => false);
+      if (!otpStillVisible || tab.url() !== urlBeforeSubmit) {
+        log.info("验证页状态已变化，认为首次提交可能已生效，不重复点击");
+      } else {
+        const retryButton = await firstVisible(
+          [tab.getByRole("button", { name: /^Verify Account$|^Verify$/i }).first()],
+          CONFIG.timeouts.short,
+        );
+        if (!retryButton) throw new Error("验证码提交按钮在 CAPTCHA 检查后不可见");
+        await retryButton.click({ timeout: CONFIG.timeouts.short });
+        log.info("已重试点击验证按钮，提交验证码");
+      }
+    }
   } else {
     log.info("验证按钮已不可见（已自动提交）");
   }

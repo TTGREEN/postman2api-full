@@ -1,4 +1,4 @@
-import { sleep } from "bun";
+import { sleep } from "./core/sleep";
 import { Camoufox } from "camoufox-js";
 import type { Browser, Page } from "playwright";
 

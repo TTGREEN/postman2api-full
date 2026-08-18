@@ -26,7 +26,7 @@ function spawnPreviewWorker(headless = false, previewUrl?: string): ChildProcess
     || (typeof Bun === "undefined" ? process.execPath : Bun.which("node"))
     || "node";
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const workerPath = path.join(projectRoot, "scripts", "temp-email-preview-worker.ts");
+  const workerPath = path.join(projectRoot, "scripts", "workers", "temp-email-preview-worker.ts");
   return spawn(nodeExecutable, ["--import", "tsx", workerPath, ...(headless ? ["--headless"] : [])], {
     cwd: projectRoot,
     env: allowedWorkerEnv(previewUrl),

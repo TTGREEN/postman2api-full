@@ -13,6 +13,7 @@ import type { Account } from "../db/schema";
 import { config } from "../config";
 import { POSTMAN_MODEL_MAP, POSTMAN_MODELS, resolvePostmanModel } from "./models";
 import {
+  isPostmanAgentModeUnavailable,
   isPostmanQuotaExceeded,
   PostmanStreamReader,
   type PostmanDelta,
@@ -21,10 +22,11 @@ import type { PostmanTokens } from "./transcript";
 import { extractTextFromMessage, isAnthropicToolResult } from "./transcript";
 import { getConversationId, setConversationId } from "./conversation-store";
 
-const DEFAULT_APP_VERSION = "12.15.4-260616-1202";
+const POSTMAN_APP_VERSION = process.env.POSTMAN_APP_VERSION?.trim();
 const CHAT_ENDPOINT = "/_gw/chat";
 const REQUEST_TIMEOUT_MS = 300_000;
 const TTFB_TIMEOUT_MS = 45_000;
+const AGENT_MODE_SETTING_TIMEOUT_MS = 10_000;
 const MAX_QUERY_LEN = 9_500;
 const MAX_CONTEXT_LEN = 800_000;
 
@@ -42,7 +44,26 @@ interface PostmanMCPTool {
   parameters: Record<string, unknown>;
 }
 
+export interface AgentModeSettingResult {
+  success: boolean;
+  enabled: boolean;
+  cached?: boolean;
+  error?: string;
+}
+
+function appVersionHeader(): Record<string, string> {
+  return POSTMAN_APP_VERSION ? { "x-app-version": POSTMAN_APP_VERSION } : {};
+}
+
+function normalizeThinkingLevel(value: unknown): "low" | "medium" | "high" {
+  const normalized = String(value || "high").toLowerCase();
+  if (normalized === "low") return "low";
+  if (normalized === "medium") return "medium";
+  return "high";
+}
+
 export class PostmanProvider extends BaseProvider {
+  private readonly agentModeSettingCache = new Set<string>();
   name = "postman" as const;
   override nativeFormat: "openai" | "anthropic" = "openai";
   supportedModels: ModelInfo[] = POSTMAN_MODELS;
@@ -82,7 +103,7 @@ export class PostmanProvider extends BaseProvider {
       Cookie: `postman.sid=${tokens.postman_sid}`,
       "Content-Type": "application/json",
       Accept: "text/event-stream",
-      "x-app-version": DEFAULT_APP_VERSION,
+      ...appVersionHeader(),
       "x-pstmn-req-service": "agent-mode-service",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       Origin: `https://${subdomain}.postman.co`,
@@ -96,10 +117,23 @@ export class PostmanProvider extends BaseProvider {
       Cookie: `postman.sid=${tokens.postman_sid}`,
       "Content-Type": "application/json",
       Accept: "application/json",
-      "x-app-version": DEFAULT_APP_VERSION,
+      ...appVersionHeader(),
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       Origin: `https://${subdomain}.postman.co`,
       Referer: `https://${subdomain}.postman.co/billing/add-ons/overview`,
+    };
+  }
+
+  private buildSettingsHeaders(tokens: PostmanTokens): Record<string, string> {
+    const subdomain = tokens.workspace_subdomain;
+    return {
+      Cookie: `postman.sid=${tokens.postman_sid}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...appVersionHeader(),
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      Origin: `https://${subdomain}.postman.co`,
+      Referer: `https://${subdomain}.postman.co/`,
     };
   }
 
@@ -232,6 +266,8 @@ export class PostmanProvider extends BaseProvider {
     const { query, seedingMessages } = this.splitMessages(request.messages, conversationId);
     const thirdParty = this.buildThirdPartyTools(request.tools);
     const hasTools = Object.keys(thirdParty).length > 0;
+    const useOfficialMcp = config.postmanOfficialMcpEnabled && hasTools;
+    const thinkingLevel = normalizeThinkingLevel(request.reasoning_effort ?? (request.thinking as any)?.effort);
 
     const input: any = {
       chatType: "USER_QUERY",
@@ -252,42 +288,78 @@ export class PostmanProvider extends BaseProvider {
       input,
       platform: "WEB",
       clientTools: {
-        nativeToolsHash: `clienttools-workspace_v12-browser-${DEFAULT_APP_VERSION}-d5808662718f`,
-        excludedTools: [
-          "listDatasets", "createDataset", "previewDataset", "queryDatasetView",
-          "deleteDataset", "getDatasetSchema", "createDatasetView", "deleteDatasetView",
-          "runQuery", "insertDatasetRows", "modifyDatasetView", "refreshDatasource",
-          "addDatasetSource", "editDatasetSource", "removeDatasetSource",
-          "testDatasourceConnection", "listCloudMocks", "getCloudMock",
-          "getCloudMockLogs", "renameCloudMock", "deleteCloudMock",
-          "checkMockSlugAvailability", "createCloudMock", "listWorkspaceDocs",
-          "getWorkspaceDoc", "createWorkspaceDoc", "updateWorkspaceDoc",
-          "deleteWorkspaceDoc", "askUser",
-        ],
-        thirdParty,
+        native: [],
       },
       clientKBTerms: {
-        nativeTermsHash: `kbterms-workspace_v12-browser-${DEFAULT_APP_VERSION}-4755650f241c`,
-        excludedKBTerms: ["DATASETS"],
+        native: [],
       },
       mandatoryContext: {
         workspaceId: tokens.workspace_id,
       },
       selectedContext: [],
       backgroundContext: [],
-      availableSkills: [],
+      userSettings: {
+        ai_user_agent_mode: true,
+      },
       devModeOptions: {
         selectedModel: postmanModel,
         isParallelToolCallingSupported: true,
-        autoRun: hasTools,
+        autoRun: useOfficialMcp,
         supportsAskUser: false,
-        supportsActionRecommendations: true,
+        supportsActionRecommendations: useOfficialMcp,
         useThinkingModeIfAvailable: true,
-        thinkingLevel: "xhigh",
+        thinkingLevel,
+        agentMode: true,
+        agentModeEnabled: true,
+        ai_user_agent_mode: true,
       },
     };
 
+    if (useOfficialMcp) {
+      body.clientTools.thirdParty = thirdParty;
+      body.availableSkills = [];
+    }
+
     return body;
+  }
+
+  async ensureAiUserAgentMode(account: Account): Promise<AgentModeSettingResult> {
+    const tokens = this.getTokens(account);
+    if (!tokens) return { success: false, enabled: false, error: "Invalid or missing Postman tokens" };
+
+    const cacheKey = `${tokens.workspace_subdomain}:${tokens.user_id}`;
+    if (this.agentModeSettingCache.has(cacheKey)) return { success: true, enabled: true, cached: true };
+
+    try {
+      const response = await fetch(
+        `https://${tokens.workspace_subdomain}.postman.co/_api/user/settings/ai_user_agent_mode`,
+        {
+          method: "PUT",
+          headers: this.buildSettingsHeaders(tokens),
+          body: JSON.stringify({ value: true }),
+          signal: AbortSignal.timeout(AGENT_MODE_SETTING_TIMEOUT_MS),
+        },
+      );
+
+      if (response.ok) {
+        this.agentModeSettingCache.add(cacheKey);
+        return { success: true, enabled: true };
+      }
+
+      const text = await response.text().catch(() => "");
+      const detail = extractUpstreamError(text);
+      return {
+        success: false,
+        enabled: false,
+        error: `Agent Mode setting failed (${response.status})${detail ? `: ${detail}` : ""}`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        enabled: false,
+        error: `Agent Mode setting failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
 
   async chatCompletion(account: Account, request: ChatCompletionRequest): Promise<ProviderResult> {
@@ -421,6 +493,9 @@ export class PostmanProvider extends BaseProvider {
           error,
           ...(isPostmanQuotaExceeded(text) || isPostmanQuotaExceeded(error)
             ? { quotaExhausted: true }
+            : {}),
+          ...(isPostmanAgentModeUnavailable(text) || isPostmanAgentModeUnavailable(error)
+            ? { retryable: true }
             : {}),
         };
       }

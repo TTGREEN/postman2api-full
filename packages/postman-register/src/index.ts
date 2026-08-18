@@ -1,4 +1,4 @@
-import { sleep } from "bun";
+import { sleep } from "./core/sleep";
 import type { Browser, BrowserContext } from "playwright";
 import { CONFIG, createRunPassword } from "./config";
 import { createPlanTrack, STAGES, type Stage, type StepContext } from "./types";

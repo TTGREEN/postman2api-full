@@ -231,6 +231,78 @@ function emit(log: LoginLogger, step: string, msg: string, level = "info"): void
   log({ step, msg, level, ts: Date.now() / 1000 });
 }
 
+export function describeAutomationError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, " ").trim().slice(0, 500) || "Unknown browser automation error";
+}
+
+export function isTransientBrowserInteractionError(error: unknown): boolean {
+  return /execution context was destroyed|because of a navigation|frame was detached|element is not attached to the dom|target page, context or browser has been closed|target closed/i
+    .test(describeAutomationError(error));
+}
+
+interface BrowserDiagnostics {
+  beginExpectedClose(): void;
+  detach(): void;
+}
+
+function pageUrlForLog(page: Page): string {
+  try {
+    return safePageUrl(page.url());
+  } catch {
+    return "<unavailable>";
+  }
+}
+
+function attachBrowserDiagnostics(browser: Browser, context: BrowserContext, log: LoginLogger): BrowserDiagnostics {
+  let expectedClose = false;
+  const observedPages = new Set<Page>();
+  const pageListeners = new Map<Page, { crash: () => void; close: () => void; pageerror: (error: Error) => void }>();
+
+  const observePage = (page: Page) => {
+    if (observedPages.has(page)) return;
+    observedPages.add(page);
+    const listeners = {
+      crash: () => emit(log, "浏览器诊断", `页面进程崩溃：${pageUrlForLog(page)}`, "error"),
+      close: () => {
+        if (!expectedClose) emit(log, "浏览器诊断", `页面已关闭：${pageUrlForLog(page)}`, "warn");
+      },
+      pageerror: (error: Error) => emit(log, "浏览器诊断", `页面脚本错误：${describeAutomationError(error)}`, "warn"),
+    };
+    page.on("crash", listeners.crash);
+    page.on("close", listeners.close);
+    page.on("pageerror", listeners.pageerror);
+    pageListeners.set(page, listeners);
+  };
+
+  const onContextPage = (page: Page) => observePage(page);
+  const onContextClose = () => {
+    if (!expectedClose) emit(log, "浏览器诊断", "浏览器上下文意外关闭。", "error");
+  };
+  const onBrowserDisconnected = () => {
+    if (!expectedClose) emit(log, "浏览器诊断", "浏览器进程连接意外断开。", "error");
+  };
+
+  context.on("page", onContextPage);
+  context.on("close", onContextClose);
+  browser.on("disconnected", onBrowserDisconnected);
+  for (const page of context.pages()) observePage(page);
+
+  return {
+    beginExpectedClose: () => { expectedClose = true; },
+    detach: () => {
+      context.off("page", onContextPage);
+      context.off("close", onContextClose);
+      browser.off("disconnected", onBrowserDisconnected);
+      for (const [page, listeners] of pageListeners) {
+        page.off("crash", listeners.crash);
+        page.off("close", listeners.close);
+        page.off("pageerror", listeners.pageerror);
+      }
+    },
+  };
+}
+
 async function fillFirstVisible(page: Page, selectors: string[], value: string): Promise<boolean> {
   for (const selector of selectors) {
     const locator = page.locator(selector).first();
@@ -458,10 +530,20 @@ async function waitForManualLogin(
       }
 
       if (signupAutomation && flow === "signup") {
-        if (stage === "signup") {
-          await automateSignupForm(page, accountEmail, signupAutomation, automationState, log);
-        } else if (stage === "onboarding") {
-          await automateOnboarding(page, accountEmail, signupAutomation, automationState, log);
+        try {
+          if (stage === "signup") {
+            await automateSignupForm(page, accountEmail, signupAutomation, automationState, log);
+          } else if (stage === "onboarding") {
+            await automateOnboarding(page, accountEmail, signupAutomation, automationState, log);
+          }
+        } catch (error) {
+          if (!isTransientBrowserInteractionError(error)) throw error;
+          emit(
+            log,
+            "自动化注册",
+            `页面正在刷新或跳转，已跳过本轮自动填写并将在下一轮重试：${describeAutomationError(error)}`,
+            "warn",
+          );
         }
       }
 
@@ -567,6 +649,7 @@ export async function loginPostman(
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Login timeout must be greater than zero");
   const log = createLogger(options.onLog);
   let browser: Browser | undefined;
+  let diagnostics: BrowserDiagnostics | undefined;
 
   try {
     emit(log, "初始化", `正在以可见模式启动 ${config.loginBrowserBackend}...`);
@@ -574,6 +657,7 @@ export async function loginPostman(
     emit(log, "浏览器", "正在打开浏览器...");
     browser = await launchLoginBrowser(config.loginBrowserBackend, { headless: false });
     const context = await browser.newContext();
+    diagnostics = attachBrowserDiagnostics(browser, context, log);
     const page = await context.newPage();
     page.setDefaultTimeout(120_000);
     const startUrl = authStartUrl(flow);
@@ -600,7 +684,9 @@ export async function loginPostman(
     return { postman_sid: "", user_id: "", workspace_id: "", workspace_subdomain: "", error: message };
   } finally {
     if (flow === "signup") clearSignupConfirmation(options.confirmationId);
+    diagnostics?.beginExpectedClose();
     await browser?.close().catch(() => undefined);
+    diagnostics?.detach();
     emit(log, "cleanup", "Browser closed");
   }
 }

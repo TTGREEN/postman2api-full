@@ -29,6 +29,12 @@ export async function getBlockingState(page: Page): Promise<string | null> {
   if (/captcha|recaptcha|turnstile|verify you are human|checking your browser|安全验证|人机验证/i.test(text)) {
     return "检测到安全验证（CAPTCHA/浏览器验证）；请在浏览器中完成验证后重试";
   }
+  if (
+    /too many (?:new )?mailboxes?(?: have been)? created/i.test(text)
+    || (/upgrade to premium/i.test(text) && /try again later/i.test(text))
+  ) {
+    return "检测到临时邮箱创建额度限制；当前服务暂时不能创建新邮箱，请稍后手动重试";
+  }
   if (/too many requests|rate limit|请求过于频繁|访问过于频繁/i.test(text)) {
     return "检测到速率限制；请稍后再试";
   }

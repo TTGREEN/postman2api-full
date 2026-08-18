@@ -18,6 +18,11 @@ export interface PostmanLoginRuntimeDependencies {
   workerRunner?: (accountLabel: string | undefined, options: PostmanLoginOptions) => Promise<PostmanLoginResult>;
 }
 
+export function describeWorkerExit(code: number | null, signal: NodeJS.Signals | null): string {
+  const signalDetail = signal ? `, signal ${signal}` : "";
+  return `Postman login worker exited with code ${code ?? "unknown"}${signalDetail}`;
+}
+
 function detectRuntime(): "bun" | "node" {
   return typeof Bun === "undefined" ? "node" : "bun";
 }
@@ -38,7 +43,7 @@ function spawnNodeWorker(...args: string[]): ChildProcessWithoutNullStreams {
     || (typeof Bun === "undefined" ? process.execPath : Bun.which("node"))
     || "node";
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-  const workerPath = path.join(projectRoot, "scripts", "postman-login-worker.ts");
+  const workerPath = path.join(projectRoot, "scripts", "workers", "postman-login-worker.ts");
   return spawn(nodeExecutable, ["--import", "tsx", workerPath, ...args], {
     cwd: projectRoot,
     env: allowedWorkerEnv(),
@@ -121,8 +126,8 @@ export async function smokePostmanLoginWorker(): Promise<void> {
       }
     });
     child.once("error", finish);
-    child.once("exit", (code) => {
-      if (!settled) finish(new Error(`Postman login worker smoke exited with code ${code ?? "unknown"}`));
+    child.once("exit", (code, signal) => {
+      if (!settled) finish(new Error(`Postman login worker smoke exited with code ${code ?? "unknown"}${signal ? `, signal ${signal}` : ""}`));
     });
   });
 }
@@ -162,8 +167,11 @@ async function readWorkerResult(
       }
     });
     child.once("error", finish);
-    child.once("exit", (code) => {
-      if (!settled) finish(new Error(`Postman login worker exited with code ${code ?? "unknown"}`));
+    child.once("exit", (code, signal) => {
+      if (settled) return;
+      const message = describeWorkerExit(code, signal);
+      onLog?.({ step: "浏览器诊断", msg: message, level: "error", ts: Date.now() / 1000 });
+      finish(new Error(message));
     });
   });
 }

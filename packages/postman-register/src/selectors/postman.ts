@@ -1,9 +1,132 @@
-import { sleep } from "bun";
+import { sleep } from "../core/sleep";
 import type { Frame, Locator, Page } from "playwright";
 import { CONFIG } from "../config";
 import { log } from "../core/logger";
+import { TurnstileDiagnostics, type TurnstileDiagnosticOutcome, redactDiagnosticUrl } from "../core/turnstileDiagnostics";
 import { waitForSignal, type WatchSignal } from "../core/monitor";
 import { firstVisible } from "../core/waiters";
+
+const BROWSER_QUERY_TIMEOUT_MS = 500;
+const TURNSTILE_INTERACTION_SETTLE_MS = 800;
+const CAPTCHA_ABSENCE_GRACE_MS = 1_200;
+
+const CAPTCHA_MARKER_SELECTOR = [
+  '.cf-turnstile',
+  'iframe[src*="challenges.cloudflare.com"]',
+  'iframe[src*="turnstile"]',
+  'input[name*="cf-turnstile" i]',
+  'input[name*="cf-chl" i]',
+  '.g-recaptcha',
+  'iframe[src*="google.com/recaptcha"]',
+  'input[name="g-recaptcha-response"], textarea[name="g-recaptcha-response"]',
+  '[data-sitekey]',
+  '[data-callback*="captcha" i]',
+].join(", ");
+
+const CAPTCHA_TOKEN_SELECTOR = [
+  'input[name*="cf-turnstile" i]',
+  'input[name*="cf-chl" i]',
+  'input[name="g-recaptcha-response"], textarea[name="g-recaptcha-response"]',
+].join(", ");
+
+interface TurnstileBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface TurnstileWidgetTarget {
+  frame: Frame;
+  loc: Locator | null;
+  box: TurnstileBox | null;
+  coordinateFallback: boolean;
+}
+
+interface PageFrameSnapshot {
+  main: Frame | null;
+  frames: Frame[];
+  complete: boolean;
+}
+
+type TurnstileMarkerState = "present" | "absent" | "unknown";
+
+/** Detached challenge frames must not hold the whole flow at Playwright's default timeout. */
+async function boundedQuery<T>(operation: () => Promise<T>, fallback: T, timeoutMs = BROWSER_QUERY_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(fallback);
+    }, timeoutMs);
+    void operation().then((value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }).catch(() => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(fallback);
+    });
+  });
+}
+
+async function readPageBody(page: Page): Promise<string> {
+  return boundedQuery(
+    () => page.locator("body").innerText({ timeout: BROWSER_QUERY_TIMEOUT_MS }),
+    "",
+  );
+}
+
+async function readFrameBody(frame: Frame): Promise<string> {
+  return boundedQuery(
+    () => frame.locator("body").innerText({ timeout: BROWSER_QUERY_TIMEOUT_MS }),
+    "",
+  );
+}
+
+const frameSnapshotWarningAt = new WeakMap<Page, number>();
+
+function warnFrameSnapshotUnavailable(page: Page, detail: string): void {
+  const now = Date.now();
+  const lastWarning = frameSnapshotWarningAt.get(page) ?? 0;
+  if (now - lastWarning < 1_500) return;
+  frameSnapshotWarningAt.set(page, now);
+  log.warn(`Turnstile 页面帧暂不可用，保留主页面并在下一轮检测重试：${detail}`);
+}
+
+/**
+ * Camoufox can briefly expose a Page whose child-frame tree is being rebuilt.
+ * Keep the main frame usable in that interval instead of letting Page.frames()
+ * terminate the whole registration worker.
+ */
+function pageFrameSnapshot(page: Page): PageFrameSnapshot {
+  let main: Frame | null;
+  try {
+    main = page.mainFrame() ?? null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnFrameSnapshotUnavailable(page, `主页面帧读取失败（${message}）`);
+    return { main: null, frames: [], complete: false };
+  }
+
+  if (!main) {
+    warnFrameSnapshotUnavailable(page, "主页面帧尚未建立");
+    return { main: null, frames: [], complete: false };
+  }
+
+  try {
+    const childFrames = page.frames();
+    return { main, frames: [main, ...childFrames.filter((frame) => frame !== main)], complete: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnFrameSnapshotUnavailable(page, `子页面帧读取失败（${message}）`);
+    return { main, frames: [main], complete: false };
+  }
+}
 
 /**
  * Postman 各页面（注册/验证/引导/升级/设置）的 DOM 细节全部集中在这里。
@@ -75,65 +198,132 @@ async function visibleOtpInputs(page: Page): Promise<Locator[]> {
 }
 
 /** Turnstile 组件标记是否出现在页面上（跨所有 frame：容器 / iframe / token 输入框） */
-async function hasTurnstileMarker(page: Page): Promise<boolean> {
-  for (const frame of [page.mainFrame(), ...page.frames()]) {
+async function getTurnstileMarkerState(page: Page, diagnostics?: TurnstileDiagnostics): Promise<TurnstileMarkerState> {
+  const snapshot = pageFrameSnapshot(page);
+  for (const frame of snapshot.frames) {
     const n = await frame
       .locator(
-        '.cf-turnstile, iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"], input[name*="cf-turnstile" i], input[name*="cf-chl" i]',
+        CAPTCHA_MARKER_SELECTOR,
       )
       .count()
       .catch(() => 0);
-    if (n > 0) return true;
+    if (n > 0) {
+      diagnostics?.observeMarker();
+      return "present";
+    }
   }
-  return false;
+  return snapshot.complete ? "absent" : "unknown";
 }
 
 /**
  * 跨所有 frame 查找已渲染为可见的 Turnstile 组件（iframe 优先，其次容器）。
  * Postman 验证表单可能在子 iframe 中，组件也可能加载慢，因此必须跨 frame 且每轮重新确认。
  */
-async function findTurnstileWidget(page: Page): Promise<{ frame: Frame; loc: Locator } | null> {
-  for (const frame of [page.mainFrame(), ...page.frames()]) {
+async function findTurnstileWidget(page: Page, diagnostics?: TurnstileDiagnostics): Promise<TurnstileWidgetTarget | null> {
+  const { main, frames } = pageFrameSnapshot(page);
+  for (const frame of frames) {
+    const challengeFrame = frame !== main && /challenges\.cloudflare\.com|turnstile/i.test(frame.url());
     const candidates = [
       frame
         .locator('.cf-turnstile iframe, iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]')
         .first(),
       frame.locator(".cf-turnstile").first(),
+      ...((challengeFrame || frame === main)
+        ? [
+            frame.locator(
+              '.cf-turnstile [role="checkbox"], .cf-turnstile input[type="checkbox"], .cf-turnstile [aria-label*="human" i], [aria-label*="verify you are human" i], [title*="verify you are human" i]',
+            ).first(),
+            frame.getByText(/verify you are human|验证你是人类|验证您是人类/i).first(),
+          ]
+        : []),
     ];
     for (const loc of candidates) {
-      if ((await loc.count().catch(() => 0)) > 0 && (await loc.isVisible().catch(() => false))) {
-        return { frame, loc };
+      if ((await loc.count().catch(() => 0)) > 0 && (await boundedQuery(() => loc.isVisible({ timeout: BROWSER_QUERY_TIMEOUT_MS }), false))) {
+        const box = await loc.boundingBox().catch(() => null);
+        diagnostics?.observeVisibleWidget(frame.url(), box);
+        return { frame, loc, box, coordinateFallback: false };
       }
     }
+
+    // Turnstile can expose only a cross-origin iframe with a usable compositor
+    // box. Its inner checkbox/text is intentionally absent from the locator
+    // tree, so a DOM-only search reports widget_not_visible even though a real
+    // browser pointer can still reach the control.
+    const iframe = frame
+      .locator('.cf-turnstile iframe, iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]')
+      .first();
+    if ((await iframe.count().catch(() => 0)) > 0) {
+      const box = await boundedQuery(() => iframe.boundingBox(), null);
+      if (box && box.width >= 10 && box.height >= 10) {
+        diagnostics?.observeVisibleWidget(frame.url(), box);
+        return { frame, loc: iframe, box, coordinateFallback: true };
+      }
+    }
+
+    // The challenge child frame is the authoritative signal that Turnstile has
+    // loaded. Its owner iframe can be present before the parent-side src/title
+    // selector is stable, so derive the clickable compositor box from the frame.
+    if (!challengeFrame) continue;
+    const owner = await boundedQuery(() => frame.frameElement(), null);
+    const box = owner ? await boundedQuery(() => owner.boundingBox(), null) : null;
+    if (!box || box.width < 10 || box.height < 10) continue;
+    diagnostics?.observeVisibleWidget(frame.url(), box);
+    return { frame, loc: null, box, coordinateFallback: true };
   }
   return null;
 }
 
-/** Turnstile 勾选框点击节流：避免高频轮询时重复点击 */
-let lastTurnstileClickAt = 0;
+/** Turnstile 勾选框点击节流：首次渲染后先等待帧树稳定，再避免高频重复点击。 */
+const turnstileClickState = new WeakMap<Page, { clickedAt?: number; key: string; seenAt: number }>();
 
 /**
- * 自动点击交互式 Turnstile 勾选框（3 秒节流）。
+ * 自动点击交互式 Turnstile 勾选框（首次可见后先稳定 800ms，之后 1.5 秒节流）。
  * invisible 模式没有可见组件时自动跳过；勾选框位于组件左侧，点击 iframe 左中部命中。
  */
-export async function clickTurnstileCheckbox(page: Page): Promise<void> {
+export async function clickTurnstileCheckbox(page: Page, diagnostics?: TurnstileDiagnostics): Promise<void> {
   const now = Date.now();
-  if (now - lastTurnstileClickAt < 3000) return;
-  const widget = await findTurnstileWidget(page);
-  if (!widget) return;
-  lastTurnstileClickAt = now;
-  const box = await widget.loc.boundingBox().catch(() => null);
+  const widget = await findTurnstileWidget(page, diagnostics);
+  if (!widget) {
+    diagnostics?.observeWidgetMissing();
+    return;
+  }
+  const box = widget.box ?? await widget.loc?.boundingBox().catch(() => null) ?? null;
+  const widgetKey = `${redactDiagnosticUrl(widget.frame.url())}|${box ? `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}` : "no-box"}`;
+  const previous = turnstileClickState.get(page);
+  if (!previous || previous.key !== widgetKey) {
+    turnstileClickState.set(page, { key: widgetKey, seenAt: now });
+    return;
+  }
+  if (now - previous.seenAt < TURNSTILE_INTERACTION_SETTLE_MS) return;
+  if (previous.clickedAt !== undefined && now - previous.clickedAt < 1500) {
+    diagnostics?.observeClickThrottled();
+    return;
+  }
+  previous.clickedAt = now;
   const position = box ? { x: Math.min(30, box.width / 4), y: box.height / 2 } : undefined;
-  log.info("检测到交互式 Turnstile 勾选框，自动点击");
-  await widget.loc
-    .click(position ? { position, timeout: 3000 } : { timeout: 3000 })
-    .catch((err) => log.warn(`Turnstile 勾选框点击未完成：${err instanceof Error ? err.message : String(err)}`));
+  diagnostics?.observeClickAttempt(widget.coordinateFallback ? "page_mouse" : "locator");
+  log.info(widget.coordinateFallback
+    ? "检测到可交互的 Turnstile iframe，使用浏览器坐标点击"
+    : "检测到交互式 Turnstile 勾选框，自动点击");
+  try {
+    if (widget.coordinateFallback && box && position) {
+      await page.mouse.click(box.x + position.x, box.y + position.y);
+    } else if (widget.loc) {
+      await widget.loc.click(position ? { position, timeout: 2500 } : { timeout: 2500 });
+    } else {
+      throw new Error("Turnstile 组件缺少可点击的定位器或坐标");
+    }
+    diagnostics?.observeClickCompleted();
+  } catch (err) {
+    diagnostics?.observeClickFailed();
+    log.warn(`Turnstile 勾选框点击未完成：${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 /** 收集「Cloudflare 已通过」的多个实时信号（绿色 Success! 可能一闪而过，多信号并行更可靠） */
-function cloudflareSuccessSignals(page: Page): WatchSignal[] {
+function cloudflareSuccessSignals(page: Page, diagnostics?: TurnstileDiagnostics): WatchSignal[] {
   // 组件可能在子 frame 里，且通过后会折叠为不可见，因此全部跨 frame 检测
-  const frames = (): Frame[] => [page.mainFrame(), ...page.frames()];
+  const frames = (): Frame[] => pageFrameSnapshot(page).frames;
   return [
     {
       name: "Turnstile 组件状态 success/solved",
@@ -152,11 +342,17 @@ function cloudflareSuccessSignals(page: Page): WatchSignal[] {
       name: "Turnstile token 已生成（隐藏输入框）",
       check: async () => {
         for (const frame of frames()) {
-          const inputs = frame.locator('input[name*="cf-turnstile" i], input[name*="cf-chl" i]');
+          const inputs = frame.locator(CAPTCHA_TOKEN_SELECTOR);
           const n = await inputs.count().catch(() => 0);
           for (let i = 0; i < n; i++) {
-            const v = await inputs.nth(i).inputValue().catch(() => "");
-            if (v && v.length > 10) return true;
+            const v = await boundedQuery(
+              () => inputs.nth(i).inputValue({ timeout: BROWSER_QUERY_TIMEOUT_MS }),
+              "",
+            );
+            if (v && v.length > 10) {
+              diagnostics?.observeToken(v.length);
+              return true;
+            }
           }
         }
         return false;
@@ -167,8 +363,8 @@ function cloudflareSuccessSignals(page: Page): WatchSignal[] {
       check: async () => {
         for (const frame of frames()) {
           const area = frame.locator(".cf-turnstile, [class*='turnstile' i], [id*='turnstile' i]").first();
-          if (!(await area.isVisible().catch(() => false))) continue;
-          if (/success/i.test(await area.innerText().catch(() => ""))) return true;
+          if (!(await boundedQuery(() => area.isVisible({ timeout: BROWSER_QUERY_TIMEOUT_MS }), false))) continue;
+          if (/success/i.test(await boundedQuery(() => area.innerText({ timeout: BROWSER_QUERY_TIMEOUT_MS }), ""))) return true;
         }
         return false;
       },
@@ -176,11 +372,12 @@ function cloudflareSuccessSignals(page: Page): WatchSignal[] {
     {
       name: "Turnstile iframe 内 Success 文案或勾选标记",
       check: async () => {
-        for (const frame of frames()) {
-          if (frame === page.mainFrame()) continue;
+        const { main, frames: currentFrames } = pageFrameSnapshot(page);
+        for (const frame of currentFrames) {
+          if (frame === main) continue;
           if (!/challenges\.cloudflare\.com|turnstile/i.test(frame.url())) continue;
           const body = frame.locator("body");
-          if (/success/i.test(await body.innerText().catch(() => ""))) return true;
+          if (/success/i.test(await readFrameBody(frame))) return true;
           const marks = await body
             .locator('[class*="success" i], [data-status="success"], [aria-label*="success" i], .mark-success')
             .count()
@@ -199,7 +396,7 @@ export function isCaptchaFailureText(text: string): boolean {
 }
 
 export async function throwIfCaptchaFailure(page: Page): Promise<void> {
-  const text = await page.locator("body").innerText().catch(() => "");
+  const text = await readPageBody(page);
   if (isCaptchaFailureText(text)) {
     throw new Error("CAPTCHA 验证失败：Unable to verify the captcha. Please try again.");
   }
@@ -211,15 +408,16 @@ export async function throwIfCaptchaFailure(page: Page): Promise<void> {
  * 避免误判正常文案中的 error 字样。
  */
 export async function throwIfTurnstileFailure(page: Page): Promise<void> {
-  for (const frame of [page.mainFrame(), ...page.frames()]) {
+  const { main, frames } = pageFrameSnapshot(page);
+  for (const frame of frames) {
     const errs = await frame
       .locator('[data-status="error"], [data-status="expired"], [data-state="error"]')
       .count()
       .catch(() => 0);
     if (errs > 0) throw new Error("Cloudflare Turnstile 验证失败（组件进入 error/expired 状态）");
-    if (frame === page.mainFrame()) continue;
+    if (frame === main) continue;
     if (!/challenges\.cloudflare\.com|turnstile/i.test(frame.url())) continue;
-    const body = await frame.locator("body").innerText().catch(() => "");
+    const body = await readFrameBody(frame);
     if (/verification failed|challenge failed|expired/i.test(body)) {
       throw new Error(`Cloudflare Turnstile 验证失败：${body.trim().slice(0, 120)}`);
     }
@@ -232,11 +430,19 @@ export function isOtpFailureText(text: string): boolean {
 }
 
 export async function throwIfOtpFailure(page: Page): Promise<void> {
-  const text = await page.locator("body").innerText().catch(() => "");
+  const text = await readPageBody(page);
   if (isOtpFailureText(text)) {
     const fragment = text.match(/[^\n]{0,80}(?:incorrect|invalid|expired|wrong|错误|过期|失效)[^\n]{0,80}/i)?.[0];
     throw new Error(`邮箱验证码未通过：${fragment ?? "验证码错误或已过期"}`);
   }
+}
+
+function diagnosticsOutcomeFor(error: unknown): TurnstileDiagnosticOutcome {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/CAPTCHA 验证失败/.test(message)) return "upstream_rejected";
+  if (/Cloudflare Turnstile 验证失败/.test(message)) return "widget_failed";
+  if (/邮箱验证码未通过/.test(message)) return "otp_rejected";
+  return "error";
 }
 
 /**
@@ -250,34 +456,63 @@ export async function waitForCloudflareSuccess(
   timeout = CONFIG.timeouts.cfWait,
   validateCaptchaAbsent?: () => Promise<boolean>,
 ): Promise<void> {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    await throwIfCaptchaFailure(page);
-    await throwIfTurnstileFailure(page);
-    if (!(await hasTurnstileMarker(page))) {
-      if (!validateCaptchaAbsent) throw new Error("未检测到 CAPTCHA 组件，且没有页面状态验证");
-      if (await validateCaptchaAbsent()) {
-        log.info("未检测到 CAPTCHA 组件，已通过当前页面状态验证");
+  const diagnostics = new TurnstileDiagnostics({ flow: "initial_challenge", emit: log.warn });
+  diagnostics.start(page);
+  let outcome: TurnstileDiagnosticOutcome = "error";
+  try {
+    const deadline = Date.now() + timeout;
+    const absenceGraceDeadline = Date.now() + CAPTCHA_ABSENCE_GRACE_MS;
+    while (Date.now() < deadline) {
+      await throwIfCaptchaFailure(page);
+      await throwIfTurnstileFailure(page);
+      const markerState = await getTurnstileMarkerState(page, diagnostics);
+      if (markerState === "unknown") {
+        await sleep(100);
+        continue;
+      }
+      if (markerState === "absent") {
+        if (Date.now() < absenceGraceDeadline) {
+          await sleep(Math.min(150, absenceGraceDeadline - Date.now()));
+          continue;
+        }
+        if (!validateCaptchaAbsent) throw new Error("未检测到 CAPTCHA 组件，且没有页面状态验证");
+        if (await validateCaptchaAbsent()) {
+          log.info("未检测到 CAPTCHA 组件，已通过当前页面状态验证");
+          outcome = "page_state_validated";
+          return;
+        }
+        await sleep(500);
+        continue;
+      }
+      const passed = await waitForSignal(cloudflareSuccessSignals(page, diagnostics), {
+        timeout: Math.min(CONFIG.timeouts.medium, deadline - Date.now()),
+        interval: 200, // 高频检测：绿色 Success! / token 生成都是转瞬即逝的状态
+        label: "等待 Cloudflare 验证通过",
+        onMiss: async () => {
+          await clickTurnstileCheckbox(page, diagnostics);
+        },
+      }).catch((error) => {
+        if (error instanceof Error && /超时/.test(error.message)) return null;
+        throw error;
+      });
+      await throwIfCaptchaFailure(page);
+      await throwIfTurnstileFailure(page);
+      if (passed) {
+        diagnostics.observeSuccess(passed);
+        outcome = "success";
         return;
       }
-      await sleep(500);
-      continue;
+      log.warn("CAPTCHA 尚未通过；继续等待并记录组件可见性/点击诊断……");
     }
-    const passed = await waitForSignal(cloudflareSuccessSignals(page), {
-      timeout: Math.min(CONFIG.timeouts.medium, deadline - Date.now()),
-      interval: 200, // 高频检测：绿色 Success! / token 生成都是转瞬即逝的状态
-      label: "等待 Cloudflare 验证通过",
-      onMiss: async () => {
-        await clickTurnstileCheckbox(page);
-      },
-    }).catch(() => null);
-    await throwIfCaptchaFailure(page);
-    await throwIfTurnstileFailure(page);
-    if (passed) return;
-    log.warn("CAPTCHA 尚未通过；已自动点击勾选框，继续等待……");
+    outcome = "timeout";
+    await diagnoseCloudflare(page);
+    throw new Error(`等待 Cloudflare 验证通过超时（${timeout}ms）`);
+  } catch (error) {
+    if (outcome !== "timeout") outcome = diagnosticsOutcomeFor(error);
+    throw error;
+  } finally {
+    diagnostics.finish(outcome);
   }
-  await diagnoseCloudflare(page);
-  throw new Error(`等待 Cloudflare 验证通过超时（${timeout}ms）`);
 }
 
 /**
@@ -285,59 +520,93 @@ export async function waitForCloudflareSuccess(
  * 给一个短暂的宽限窗口等组件出现：出现则自动点击并等待通过（组件消失即放行），
  * 没出现则直接返回。期间检测到验证码错误/CAPTCHA 失败会立即抛错。
  */
-export async function waitForPostSubmitChallenge(page: Page, graceMs = 8000): Promise<void> {
-  const graceDeadline = Date.now() + graceMs;
-  let appeared = false;
-  while (Date.now() < graceDeadline && !appeared) {
-    await throwIfOtpFailure(page);
-    appeared = await hasTurnstileMarker(page);
-    if (!appeared) await sleep(400);
-  }
-  if (!appeared) return;
+export async function waitForPostSubmitChallenge(page: Page, graceMs = 20000): Promise<void> {
+  const diagnostics = new TurnstileDiagnostics({ flow: "post_submit_challenge", emit: log.warn });
+  diagnostics.start(page);
+  let outcome: TurnstileDiagnosticOutcome = "error";
+  try {
+    const graceDeadline = Date.now() + graceMs;
+    let appeared = false;
+    while (Date.now() < graceDeadline && !appeared) {
+      await throwIfOtpFailure(page);
+      const markerState = await getTurnstileMarkerState(page, diagnostics);
+      appeared = markerState === "present";
+      if (!appeared) await sleep(markerState === "unknown" ? 100 : 400);
+    }
+    if (!appeared) {
+      outcome = "component_not_appeared";
+      return;
+    }
 
-  log.info("提交后检测到新的 CAPTCHA 挑战，自动点击并等待通过……");
-  const deadline = Date.now() + CONFIG.timeouts.cfWait;
-  while (Date.now() < deadline) {
-    await throwIfCaptchaFailure(page);
-    await throwIfTurnstileFailure(page);
-    await throwIfOtpFailure(page);
-    // 组件消失 = 已放行（通过后组件会被移除）；失败文案已在上方抛错
-    if (!(await hasTurnstileMarker(page))) return;
-    const solved = await waitForSignal(cloudflareSuccessSignals(page), {
-      timeout: Math.min(CONFIG.timeouts.medium, deadline - Date.now()),
-      interval: 200,
-      label: "等待提交后的 CAPTCHA 通过",
-      onMiss: async () => {
-        await clickTurnstileCheckbox(page);
-      },
-    }).catch(() => null);
-    if (solved) return;
+    log.info("提交后检测到新的 CAPTCHA 挑战，自动点击并等待通过……");
+    const deadline = Date.now() + CONFIG.timeouts.cfWait;
+    while (Date.now() < deadline) {
+      await throwIfCaptchaFailure(page);
+      await throwIfTurnstileFailure(page);
+      await throwIfOtpFailure(page);
+      // 组件消失 = 已放行（通过后组件会被移除）；失败文案已在上方抛错
+      const markerState = await getTurnstileMarkerState(page, diagnostics);
+      if (markerState === "unknown") {
+        await sleep(100);
+        continue;
+      }
+      if (markerState === "absent") {
+        diagnostics.observeSuccess("组件已移除");
+        outcome = "success";
+        return;
+      }
+      const solved = await waitForSignal(cloudflareSuccessSignals(page, diagnostics), {
+        timeout: Math.min(CONFIG.timeouts.medium, deadline - Date.now()),
+        interval: 200,
+        label: "等待提交后的 CAPTCHA 通过",
+        onMiss: async () => {
+          await clickTurnstileCheckbox(page, diagnostics);
+        },
+      }).catch((error) => {
+        if (error instanceof Error && /超时/.test(error.message)) return null;
+        throw error;
+      });
+      if (solved) {
+        diagnostics.observeSuccess(solved);
+        outcome = "success";
+        return;
+      }
+    }
+    outcome = "timeout";
+    await diagnoseCloudflare(page);
+    throw new Error(`提交后的 CAPTCHA 等待超时（${CONFIG.timeouts.cfWait}ms）`);
+  } catch (error) {
+    if (outcome !== "timeout") outcome = diagnosticsOutcomeFor(error);
+    throw error;
+  } finally {
+    diagnostics.finish(outcome);
   }
-  await diagnoseCloudflare(page);
-  throw new Error(`提交后的 CAPTCHA 等待超时（${CONFIG.timeouts.cfWait}ms）`);
 }
 
 /** 诊断：超时时输出页面上的 Turnstile 现场信息（跨所有 frame），便于排查为何没检测到 */
 async function diagnoseCloudflare(page: Page): Promise<void> {
   log.warn("Cloudflare 检测超时，输出现场信息：");
-  const statuses = await page
-    .locator("[data-status]")
-    .evaluateAll((els) => els.map((el) => el.getAttribute("data-status")))
-    .catch(() => []);
+  const statuses = await boundedQuery(
+    () => page.locator("[data-status]").evaluateAll((els) => els.map((el) => el.getAttribute("data-status"))),
+    [] as (string | null)[],
+  );
   log.warn(`  data-status 属性值: ${JSON.stringify(statuses)}`);
-  for (const frame of [page.mainFrame(), ...page.frames()]) {
+  const { main, frames } = pageFrameSnapshot(page);
+  for (const frame of frames) {
     const widgets = await frame
       .locator('.cf-turnstile, iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]')
       .count()
       .catch(() => 0);
-    const token = await frame
-      .locator('input[name*="cf-turnstile" i], input[name*="cf-chl" i]')
-      .first()
-      .inputValue()
-      .catch(() => "");
+    const token = await boundedQuery(
+      () => frame
+        .locator(CAPTCHA_TOKEN_SELECTOR)
+        .first()
+        .inputValue({ timeout: BROWSER_QUERY_TIMEOUT_MS }),
+      "",
+    );
     if (widgets > 0 || token) {
       log.warn(
-        `  frame(${frame === page.mainFrame() ? "主" : "子"} ${frame.url()}): 组件 ${widgets} 个, token ${token ? `已生成（${token.length} 字符）` : "未生成"}`,
+        `  frame(${frame === main ? "主" : "子"} ${redactDiagnosticUrl(frame.url())}): 组件 ${widgets} 个, token ${token ? `已生成（${token.length} 字符）` : "未生成"}`,
       );
     }
   }
@@ -381,7 +650,7 @@ const OTP_PAGE_TEXT =
  */
 async function isOtpPageVisible(page: Page): Promise<boolean> {
   if (!(await verificationPageReady(page))) return false;
-  const text = await page.locator("body").innerText().catch(() => "");
+  const text = await readPageBody(page);
   return OTP_PAGE_TEXT.test(text);
 }
 
@@ -398,7 +667,7 @@ export async function waitForSignupOutcome(
   while (Date.now() < deadline) {
     await throwIfCaptchaFailure(page);
     if (await isOtpPageVisible(page)) return "otp";
-    const text = await page.locator("body").innerText().catch(() => "");
+    const text = await readPageBody(page);
     if (isSignupFatalText(text)) {
       const fragment = text.match(/[^\n]{0,100}(?:already|not allowed|not supported|disposable)[^\n]{0,100}/i)?.[0];
       throw new Error(`注册被 Postman 拒绝（确定性错误，重试无意义）：${fragment ?? "邮箱或用户名不可用"}`);
@@ -658,6 +927,55 @@ export async function waitForAiSection(page: Page, timeout = CONFIG.timeouts.med
 
 export const upgradeButton = (page: Page): Locator =>
   page.getByRole("button", { name: /^upgrade$/i }).first();
+
+export const upgradeEntryCandidates = (page: Page): Locator[] => [
+  upgradeButton(page),
+  page.getByRole("link", { name: /^upgrade$/i }).first(),
+  page.getByRole("button", { name: /upgrade/i }).first(),
+  page.getByRole("link", { name: /upgrade/i }).first(),
+  page.locator('button:has-text("Upgrade"), a:has-text("Upgrade"), [role="button"]:has-text("Upgrade")').first(),
+  page.locator('[data-testid*="upgrade" i], [aria-label*="upgrade" i], [title*="upgrade" i]').first(),
+  page.getByRole("button", { name: /view plans|manage plan|change plan/i }).first(),
+  page.getByRole("link", { name: /view plans|manage plan|change plan/i }).first(),
+];
+
+export const upgradeFallbackUrls = (workspaceUrl: string): string[] => [
+  `${workspaceUrl}/billing`,
+  `${workspaceUrl}/settings/billing`,
+  `${workspaceUrl}/settings/billing/plans`,
+  `${workspaceUrl}/settings/team/billing`,
+  `${workspaceUrl}/settings/team/ai`,
+];
+
+function redactPageSummaryText(value: string): string {
+  return value
+    .replace(/\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/gi, "<email>")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "<opaque>");
+}
+
+export async function upgradeEntryDiagnostic(page: Page): Promise<string> {
+  const actions = await page
+    .evaluate(() => {
+      const visible = (el: Element) => {
+        const rect = (el as HTMLElement).getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+      };
+      return Array.from(document.querySelectorAll("button, a, [role='button'], [aria-label], [data-testid]"))
+        .filter(visible)
+        .slice(0, 30)
+        .map((el) => ({
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute("role"),
+          text: (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 80),
+          aria: el.getAttribute("aria-label"),
+          testId: el.getAttribute("data-testid"),
+          href: el instanceof HTMLAnchorElement ? el.href : null,
+        }));
+    })
+    .catch((error) => `诊断失败: ${error instanceof Error ? error.message : String(error)}`);
+  return redactPageSummaryText(JSON.stringify(actions)).slice(0, 2000);
+}
 
 export const enterpriseOption = (page: Page): Locator[] => [
   // 注意：radio input 上覆盖了一层 .Radio__StyledRadioDummy 装饰元素，直接点 input 会被拦截。

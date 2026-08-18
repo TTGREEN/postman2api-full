@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $bunPath = "C:\Users\Administrator\AppData\Roaming\npm\node_modules\bun\bin\bun.exe"
 $nodePath = "C:\Program Files\nodejs\node.exe"
 $databasePath = ".test-state/storage/temp-email-preview-e2e.db"
@@ -36,7 +36,7 @@ try {
   } while (-not $health -and (Get-Date) -lt $deadline)
   if (-not $health) { throw "Temporary E2E server did not become healthy" }
 
-  & $nodePath "--import" "tsx" "scripts/temp-email-preview-e2e.ts"
+  & $nodePath "--import" "tsx" "scripts/e2e/temp-email-preview-e2e.ts"
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 finally {

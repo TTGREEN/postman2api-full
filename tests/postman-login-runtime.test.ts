@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loginPostmanForRuntime } from "../src/auth/postman-login-runtime";
+import { describeWorkerExit, loginPostmanForRuntime } from "../src/auth/postman-login-runtime";
 
 const result = {
   postman_sid: "sid",
@@ -9,6 +9,11 @@ const result = {
 };
 
 describe("Postman login runtime selection", () => {
+  test("preserves worker exit code and signal in the parent diagnostic", () => {
+    expect(describeWorkerExit(1, null)).toBe("Postman login worker exited with code 1");
+    expect(describeWorkerExit(null, "SIGTERM")).toBe("Postman login worker exited with code unknown, signal SIGTERM");
+  });
+
   test("runs Camoufox login in a Node worker when the service uses Bun", async () => {
     const calls: string[] = [];
     const received = await loginPostmanForRuntime("user@example.com", {}, {

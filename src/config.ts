@@ -22,6 +22,7 @@ const quotaSafeStreamBufferBytes = positiveNumber(
 );
 const streamKeepaliveIntervalMs = positiveNumber(process.env.STREAM_KEEPALIVE_INTERVAL_MS, 10_000);
 const postmanFetchVerbose = /^(1|true|yes)$/i.test(process.env.POSTMAN_FETCH_VERBOSE || "");
+const postmanOfficialMcpEnabled = /^(1|true|yes)$/i.test(process.env.POSTMAN_OFFICIAL_MCP_ENABLED || "");
 
 export const config = {
   host: process.env.HOST || "127.0.0.1",
@@ -35,6 +36,7 @@ export const config = {
   quotaSafeStreamBufferBytes,
   streamKeepaliveIntervalMs,
   postmanFetchVerbose,
+  postmanOfficialMcpEnabled,
   loginBrowserBackend: parseLoginBrowserBackend(process.env.LOGIN_BROWSER_BACKEND),
   // Bun.serve expects seconds and supports at most 255. Prefer the longer
   // provider/stream timeout, capped to Bun's supported range.

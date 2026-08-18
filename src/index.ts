@@ -13,6 +13,8 @@ import { eq } from "drizzle-orm";
 import { isDefaultEncryptionKey } from "./utils/crypto";
 import { acceptsApiKey } from "./auth/api-key";
 import { tempEmailPreviewSessions } from "./auth/temp-email-preview-runtime";
+import { registrationRouter } from "./api/registration";
+import { registrationRuntime } from "./automation-lab/registration-runtime";
 
 const app = new Hono();
 
@@ -34,6 +36,12 @@ app.route("/", modelsRouter);
 app.route("/api/accounts", accountsRouter);
 app.route("/api/stats", statsRouter);
 app.route("/api/settings", settingsRouter);
+app.route("/api/registration", registrationRouter);
+
+const recoveredRegistrationJobs = await registrationRuntime.recoverOrphanedJobs();
+if (recoveredRegistrationJobs > 0) {
+  console.warn(`[postman2api] Recovered ${recoveredRegistrationJobs} orphaned registration job(s)`);
+}
 
 app.get("/docs/postman-account-token.md", async () => {
   const file = Bun.file("docs/postman-account-token.md");
@@ -108,6 +116,7 @@ process.on("SIGTERM", async () => {
   stopWarmupScheduler();
   server.stop();
   await tempEmailPreviewSessions.closeAll();
+  await registrationRuntime.shutdown();
 });
 
 export { app, server };

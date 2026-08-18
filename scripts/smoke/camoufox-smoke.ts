@@ -1,5 +1,5 @@
-import { launchLoginBrowser } from "../src/auth/browser-launcher.ts";
-import { smokePostmanLoginWorker } from "../src/auth/postman-login-runtime.ts";
+import { launchLoginBrowser } from "../../src/auth/browser-launcher.ts";
+import { smokePostmanLoginWorker } from "../../src/auth/postman-login-runtime.ts";
 
 const publicLoginPage = process.argv.includes("--postman-login");
 if (typeof Bun !== "undefined" && !publicLoginPage) {

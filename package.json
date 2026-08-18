@@ -7,14 +7,15 @@
     "dev": "bun --watch src/index.ts",
     "migrate": "bun src/db/migrate.ts",
     "build": "cd dashboard && bun run build",
-    "typecheck": "bunx tsc --noEmit",
+    "release:package": "powershell -ExecutionPolicy Bypass -File scripts/ops/create-release-package.ps1",
+    "typecheck": "bunx tsc --noEmit && bunx tsc --noEmit -p dashboard/tsconfig.json",
     "test": "bun test",
-    "postinstall": "bun scripts/install-camoufox.ts",
+    "postinstall": "bun scripts/ops/install-camoufox.ts",
     "test:stream": "bun test tests/stream-cancel.test.ts",
-    "browser:camoufox:fetch": "bun scripts/install-camoufox.ts",
-    "browser:camoufox:smoke": "bun scripts/camoufox-smoke.ts",
-    "browser:camoufox:smoke:node": "node --import tsx scripts/camoufox-smoke.ts",
-    "browser:camoufox:smoke:postman": "node --experimental-strip-types scripts/camoufox-smoke.ts --postman-login"
+    "browser:camoufox:fetch": "bun scripts/ops/install-camoufox.ts",
+    "browser:camoufox:smoke": "bun scripts/smoke/camoufox-smoke.ts",
+    "browser:camoufox:smoke:node": "node --import tsx scripts/smoke/camoufox-smoke.ts",
+    "browser:camoufox:smoke:postman": "node --experimental-strip-types scripts/smoke/camoufox-smoke.ts --postman-login"
   },
   "dependencies": {
     "camoufox-js": "0.12.0",

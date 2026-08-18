@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { accountsRouter, normalizeAccountImportPayload } from "../src/api/accounts";
 import { db } from "../src/db/index";
 import { accounts } from "../src/db/schema";
-import { importAccounts } from "../dashboard/src/lib/api";
+import { fetchRegistrationJobs, importAccounts } from "../dashboard/src/lib/api";
 
 const emails: string[] = [];
 
@@ -97,5 +97,21 @@ describe("account JSON import", () => {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  });
+
+  test("explains an HTML API response instead of leaking a JSON parser error", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("<!doctype html><html></html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })) as typeof fetch;
+
+    try {
+      await expect(fetchRegistrationJobs()).rejects.toThrow(
+        "接口 /api/registration 返回了非 JSON 响应（HTTP 200）",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

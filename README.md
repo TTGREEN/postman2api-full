@@ -167,6 +167,7 @@ curl http://localhost:1930/v1/models \
 | `QUOTA_SAFE_STREAM_BUFFER_BYTES` | `16777216` | 额度安全流式缓冲的最大字节数。 |
 | `STREAM_KEEPALIVE_INTERVAL_MS` | `10000` | 缓冲或重试期间的 SSE 注释心跳间隔。 |
 | `POSTMAN_FETCH_VERBOSE` | `false` | 输出生命周期诊断日志，不包含鉴权头或请求/响应体。 |
+| `POSTMAN_OFFICIAL_MCP_ENABLED` | `false` | 只有已在 Postman 官方界面配置 MCP 服务时才开启；默认纯聊天不发送 MCP/工具元数据。 |
 | `BATCHER_PROXY_URL` | 未设置 | 浏览器自动化使用的可选代理。 |
 | `LOGIN_BROWSER_BACKEND` | `camoufox` | 登录浏览器后端：`camoufox` 或 `playwright`。 |
 

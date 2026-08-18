@@ -50,15 +50,48 @@ async function migrate() {
     updated_at INTEGER NOT NULL
   )`);
 
+  await db.run(sql`CREATE TABLE IF NOT EXISTS automation_jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'registration',
+    mode TEXT NOT NULL DEFAULT 'upstream',
+    target TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    requested INTEGER NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0,
+    retry_limit INTEGER NOT NULL DEFAULT 1,
+    input TEXT NOT NULL,
+    result TEXT,
+    error_message TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    started_at INTEGER,
+    finished_at INTEGER
+  )`);
+
+  await db.run(sql`CREATE TABLE IF NOT EXISTS automation_job_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES automation_jobs(id),
+    seq INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    stage TEXT,
+    attempt_index INTEGER,
+    level TEXT NOT NULL DEFAULT 'info',
+    message TEXT NOT NULL,
+    payload TEXT,
+    created_at INTEGER NOT NULL
+  )`);
+
   await db.run(sql`CREATE INDEX IF NOT EXISTS request_logs_created_at_idx ON request_logs(created_at)`);
   await db.run(sql`CREATE INDEX IF NOT EXISTS request_logs_status_created_at_idx ON request_logs(status, created_at)`);
   await db.run(sql`CREATE INDEX IF NOT EXISTS request_logs_account_idx ON request_logs(account_id)`);
   await db.run(sql`CREATE INDEX IF NOT EXISTS session_states_updated_at_idx ON session_states(updated_at)`);
   await db.run(sql`CREATE INDEX IF NOT EXISTS session_states_account_idx ON session_states(account_id)`);
+  await db.run(sql`CREATE INDEX IF NOT EXISTS automation_jobs_status_updated_at_idx ON automation_jobs(status, updated_at)`);
+  await db.run(sql`CREATE INDEX IF NOT EXISTS automation_job_events_job_seq_idx ON automation_job_events(job_id, seq)`);
 
   await db.run(sql`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES ('admin_key', 'postman2api', ${Date.now()})`);
 
-  console.log("[migrate] Done. Tables created: accounts, request_logs, settings, session_states");
+  console.log("[migrate] Done. Tables created: accounts, request_logs, settings, session_states, automation_jobs, automation_job_events");
   client.close();
 }
 

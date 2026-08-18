@@ -1,4 +1,4 @@
-import { sleep } from "bun";
+import { sleep } from "./sleep";
 import { CONFIG } from "../config";
 import { log } from "./logger";
 
@@ -21,6 +21,51 @@ export interface WaitSignalOptions {
   onMiss?: (elapsedMs: number) => Promise<void>;
 }
 
+/** A detached browser frame can leave a locator promise pending indefinitely. */
+async function boundedSignalCheck(check: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve(false);
+    }, timeoutMs);
+    void check().then((value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }).catch(() => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+async function boundedMissHook(hook: () => Promise<void>, timeoutMs: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(`等待信号交互钩子超时（${timeoutMs}ms）`));
+    }, timeoutMs);
+    void hook().then(() => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    }).catch((error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
 /**
  * 实时元素监测工具：以固定间隔连续轮询多个信号，任一命中即返回。
  * 与 waiters 里的一次性等待不同：粒度更细、多信号并行、命中即时打日志，
@@ -29,14 +74,24 @@ export interface WaitSignalOptions {
 export async function waitForSignal(signals: WatchSignal[], opts: WaitSignalOptions = {}): Promise<string> {
   const { timeout = CONFIG.timeouts.long, interval = 300, label = "等待信号" } = opts;
   const start = Date.now();
+  // Keep a single slow/detached frame from blocking onMiss (for example the
+  // Turnstile click hook) for Playwright's default 30-second locator timeout.
+  const checkTimeout = Math.max(50, Math.min(interval, 1000));
   while (Date.now() - start < timeout) {
     for (const s of signals) {
-      if (await s.check().catch(() => false)) {
+      if (await boundedSignalCheck(s.check, checkTimeout)) {
         log.info(`${label}: 命中信号「${s.name}」`);
         return s.name;
       }
     }
-    await opts.onMiss?.(Date.now() - start);
+    const remaining = timeout - (Date.now() - start);
+    if (remaining <= 0) break;
+    if (opts.onMiss) {
+      await boundedMissHook(
+        () => opts.onMiss!(Date.now() - start),
+        Math.max(250, Math.min(2500, remaining)),
+      );
+    }
     await sleep(interval);
   }
   throw new Error(

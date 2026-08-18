@@ -38,3 +38,13 @@ statsRouter.get("/", async (c) => {
     },
   });
 });
+
+statsRouter.post("/reset", async (c) => {
+  const [before] = await db.select({ count: sql<number>`count(*)` }).from(requestLogs);
+  await db.delete(requestLogs);
+
+  return c.json({
+    success: true,
+    deletedRequestLogs: before?.count || 0,
+  });
+});

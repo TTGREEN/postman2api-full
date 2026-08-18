@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $bunPath = "C:\Users\Administrator\AppData\Roaming\npm\node_modules\bun\bin\bun.exe"
 $databasePath = ".test-state/storage/postman-unit.db"
 $databaseFile = Join-Path $repoRoot ".test-state\storage\postman-unit.db"

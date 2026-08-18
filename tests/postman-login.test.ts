@@ -14,9 +14,11 @@ import {
   clearSignupConfirmation,
   confirmSignupCompletion,
   decodeJwtPayload,
+  describeAutomationError,
   deriveSignupUsername,
   extractIdentity,
   isSignupCompletionConfirmed,
+  isTransientBrowserInteractionError,
   prepareSignupConfirmation,
   shouldCompletePostmanSetup,
   workspaceSubdomainFromUrl,
@@ -90,6 +92,13 @@ describe("Postman login pure helpers", () => {
     expect(isSignupCompletionConfirmed(confirmationId)).toBe(true);
     clearSignupConfirmation(confirmationId);
     expect(isSignupCompletionConfirmed(confirmationId)).toBe(false);
+  });
+
+  test("retries only page-transition automation errors and keeps diagnostics compact", () => {
+    expect(isTransientBrowserInteractionError(new Error("Execution context was destroyed, most likely because of a navigation"))).toBe(true);
+    expect(isTransientBrowserInteractionError(new Error("Target page, context or browser has been closed"))).toBe(true);
+    expect(isTransientBrowserInteractionError(new Error("locator.fill: strict mode violation"))).toBe(false);
+    expect(describeAutomationError(new Error("  line one\nline two  "))).toBe("line one line two");
   });
 });
 

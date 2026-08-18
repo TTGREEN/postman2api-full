@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import type { TabManager } from "./core/browser";
+import type { AccountToken } from "./core/accountToken";
 
 /** 阶段顺序，与执行流程一一对应 */
 export const STAGES = ["tempEmail", "signup", "verify", "profile", "upgrade", "team", "enableAi"] as const;
@@ -31,6 +32,8 @@ export interface PlanTrack {
   postmanTab: Page | null;
   /** 当前阶段（用于日志与断点定位） */
   stage: Stage;
+  /** 最终阶段收集到的账号凭据，仅在宿主显式接收时回传。 */
+  accountToken: AccountToken | null;
 }
 
 export function createPlanTrack(password: string): PlanTrack {
@@ -45,6 +48,7 @@ export function createPlanTrack(password: string): PlanTrack {
     emailTab: null,
     postmanTab: null,
     stage: "tempEmail",
+    accountToken: null,
   };
 }
 
@@ -52,4 +56,5 @@ export function createPlanTrack(password: string): PlanTrack {
 export interface StepContext {
   plan: PlanTrack;
   tabs: TabManager;
+  onToken?: (token: AccountToken) => Promise<void> | void;
 }

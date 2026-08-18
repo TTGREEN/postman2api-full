@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createTempEmailPreviewWorker } from "../src/auth/temp-email-preview-runtime.ts";
+import { createTempEmailPreviewWorker } from "../../src/auth/temp-email-preview-runtime.ts";
 
 const fixture = createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8" });

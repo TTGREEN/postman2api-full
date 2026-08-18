@@ -28,7 +28,7 @@ export async function runEnableAi(ctx: StepContext): Promise<void> {
 
   const enable = ps.enableButton(tab);
   await enable.waitFor({ state: "visible", timeout: CONFIG.timeouts.long });
-  await enable.click();
+  await enable.click({ timeout: CONFIG.timeouts.short });
   log.info("已点击 Enable，等待按钮变为 Disable……");
 
   await waitForVisibleText(tab, /^Disable$/, CONFIG.timeouts.medium);
@@ -38,6 +38,12 @@ export async function runEnableAi(ctx: StepContext): Promise<void> {
   // 8. 最后一步：收集账号 Token（postman_sid / user_id / workspace_id / workspace_subdomain）
   //    并保存为独立文件（固定目录，每次运行一个文件），格式见 docs/postman-account-token.md
   const token = await collectAccountToken(tab, plan.email ?? "", plan.password);
-  const file = saveAccountToken(token);
-  log.ok(`账号 Token 已保存到 ${file}（可直接用于 postman2api 管理台导入）`);
+  plan.accountToken = token;
+  if (ctx.onToken) {
+    await ctx.onToken(token);
+    log.ok("账号 Token 已交给宿主任务保存（未写入额外文件）");
+  } else {
+    const file = saveAccountToken(token);
+    log.ok(`账号 Token 已保存到 ${file}（可直接用于 postman2api 管理台导入）`);
+  }
 }

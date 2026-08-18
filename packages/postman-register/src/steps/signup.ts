@@ -2,14 +2,14 @@ import type { Locator, Page, Response } from "playwright";
 import { CONFIG } from "../config";
 import type { StepContext } from "../types";
 import { log } from "../core/logger";
-import { firstVisible, retry, sleep } from "../core/waiters";
+import { clickWhenReady, firstVisible, retry, sleep } from "../core/waiters";
 import * as ps from "../selectors/postman";
 
 async function fillField(page: Page, candidates: Locator[], value: string, label: string): Promise<void> {
   const loc = await firstVisible(candidates, CONFIG.timeouts.short);
   if (!loc) throw new Error(`未找到输入框: ${label}`);
   await loc.fill(value);
-  log.info(`已填写 ${label}: ${value}`);
+  log.info(`已填写 ${label}`);
 }
 
 /**
@@ -59,7 +59,12 @@ export async function runSignup(ctx: StepContext): Promise<void> {
   log.stageStart("signup", "打开 Postman 注册页");
   if (!plan.email) throw new Error("缺少临时邮箱，请先执行第一阶段");
 
-  const tab = await tabs.openDedicatedTab("Postman 注册 B", CONFIG.urls.postmanSignup);
+  let tab = plan.postmanTab;
+  if (!tab || tab.isClosed()) {
+    tab = await tabs.openDedicatedTab("Postman 注册 B", CONFIG.urls.postmanSignup);
+  } else {
+    await tabs.bringToFront(tab);
+  }
   if (tab === plan.emailTab) throw new Error("内部错误：Postman 注册页与临时邮箱共用了同一标签页");
   plan.postmanTab = tab;
 
@@ -85,28 +90,33 @@ export async function runSignup(ctx: StepContext): Promise<void> {
 
     // 点击前挂上接口捕获，提交被拒时能看到真实原因
     const capture = captureSignupApiResponses(tab);
-    await submit.click();
-    plan.signupSubmitted = true;
-    log.info("已正常提交注册表单，等待跳转到验证码界面……");
+    try {
+      await clickWhenReady(submit, { timeout: CONFIG.timeouts.medium, label: "注册提交按钮" });
+      plan.signupSubmitted = true;
+      log.info("已正常提交注册表单，等待跳转到验证码界面……");
 
-    // 竞速检测：OTP 界面（成功）vs "Something went wrong"（可刷新重试）vs 确定性错误（立即抛错）。
-    // 只有确认跳转到验证码输入界面后，verify 阶段才被允许去邮箱 tab 取码。
-    const outcome = await ps.waitForSignupOutcome(tab);
-    const apiResponses = await capture.done();
-    if (outcome === "otp") {
-      otpReady = true;
-      plan.verificationReady = true;
-      log.ok("已确认跳转到验证码输入界面，可以开始从邮箱提取验证码");
-    } else {
-      log.warn("页面提示 Something went wrong, please refresh the page.");
-      if (apiResponses.length > 0) {
-        lastApiLog = apiResponses.join("\n  ");
-        log.warn(`注册接口响应（定位拒绝原因）：\n  ${lastApiLog}`);
+      // 竞速检测：OTP 界面（成功）vs "Something went wrong"（可刷新重试）vs 确定性错误（立即抛错）。
+      // 只有确认跳转到验证码输入界面后，verify 阶段才被允许去邮箱 tab 取码。
+      const outcome = await ps.waitForSignupOutcome(tab);
+      const apiResponses = await capture.done();
+      if (outcome === "otp") {
+        otpReady = true;
+        plan.verificationReady = true;
+        log.ok("已确认跳转到验证码输入界面，可以开始从邮箱提取验证码");
       } else {
-        lastApiLog = "未捕获到注册接口 POST 响应（请求可能未发出，或被浏览器/扩展拦截）";
-        log.warn(lastApiLog);
+        log.warn("页面提示 Something went wrong, please refresh the page.");
+        if (apiResponses.length > 0) {
+          lastApiLog = apiResponses.join("\n  ");
+          log.warn(`注册接口响应（定位拒绝原因）：\n  ${lastApiLog}`);
+        } else {
+          lastApiLog = "未捕获到注册接口 POST 响应（请求可能未发出，或被浏览器/扩展拦截）";
+          log.warn(lastApiLog);
+        }
+        await sleep(500);
       }
-      await sleep(500);
+    } catch (error) {
+      await capture.done();
+      throw error;
     }
   }
   if (!otpReady) {

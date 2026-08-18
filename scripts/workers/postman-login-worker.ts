@@ -4,8 +4,8 @@ import {
   loginPostman,
   prepareSignupConfirmation,
   type PostmanLoginOptions,
-} from "../src/auth/postman-login.ts";
-import { launchLoginBrowser } from "../src/auth/browser-launcher.ts";
+} from "../../src/auth/postman-login.ts";
+import { launchLoginBrowser } from "../../src/auth/browser-launcher.ts";
 
 type StartMessage = { type: "start"; accountLabel?: string; options: PostmanLoginOptions };
 type ConfirmMessage = { type: "confirm"; confirmationId: string };

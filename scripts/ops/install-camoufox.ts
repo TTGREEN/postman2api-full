@@ -17,7 +17,7 @@ if (skipRequested) {
   process.exit(0);
 }
 
-const cli = join(import.meta.dir, "..", "node_modules", "camoufox-js", "dist", "__main__.js");
+const cli = join(import.meta.dir, "..", "..", "node_modules", "camoufox-js", "dist", "__main__.js");
 if (!existsSync(cli)) {
   console.error(`[camoufox] Installer CLI not found at ${cli}. Ensure camoufox-js is installed.`);
   process.exit(1);
@@ -29,7 +29,7 @@ try {
   // Execute the dependency's existing fetch CLI with Bun explicitly. The CLI itself
   // compares the cached version before downloading, making repeated installs idempotent.
   const child = Bun.spawn([process.execPath, cli, "fetch"], {
-    cwd: join(import.meta.dir, ".."),
+    cwd: join(import.meta.dir, "..", ".."),
     env: process.env,
     stdin: "inherit",
     stdout: "inherit",

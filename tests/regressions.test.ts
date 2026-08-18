@@ -14,6 +14,7 @@ import {
 import { db } from "../src/db/index";
 import { accounts } from "../src/db/schema";
 import { eq } from "drizzle-orm";
+import { config } from "../src/config";
 import {
   clearConversations,
   getConversationId,
@@ -200,11 +201,28 @@ describe("stream error detection", () => {
     expect(reader.error).toBe(monthlyCreditError);
   });
 
+  test("classifies Postman Agent Mode input-validation Forbidden as retryable setup state", () => {
+    const reader = new PostmanStreamReader();
+    reader.feed(`data: ${JSON.stringify({
+      eventType: "error",
+      data: { errorType: "INPUT_VALIDATION_ERROR", message: "Forbidden" },
+    })}`);
+    expect(reader.retryableError).toBe(true);
+    expect(reader.error).toContain("Agent Mode");
+  });
+
   test("classifies an empty failure event as temporary AI provisioning", () => {
     const reader = new PostmanStreamReader();
     reader.feed(`data: ${JSON.stringify({ eventType: "failure", data: {} })}`);
     expect(reader.retryableError).toBe(true);
     expect(reader.error).toContain("AI access is not ready");
+  });
+
+  test("surfaces Postman top-level failure events instead of treating them as empty output", () => {
+    const reader = new PostmanStreamReader();
+    reader.feed(`data: ${JSON.stringify({ result: "failure", message: "Cannot read properties of undefined (reading 'native')" })}`);
+    expect(reader.error).toBe("Cannot read properties of undefined (reading 'native')");
+    expect(reader.retryableError).toBe(false);
   });
 
   test("does not expose an empty failure event as a successful stream", async () => {
@@ -236,6 +254,92 @@ describe("stream error detection", () => {
     expect(result.quotaExhausted).toBe(true);
     expect(result.error).toBe(monthlyCreditError);
     expect(result.stream).toBeUndefined();
+  });
+
+  test("builds a pure-chat Agent Mode request without stale native hashes, MCP metadata, or xhigh thinking", () => {
+    const originalMcpFlag = (config as any).postmanOfficialMcpEnabled;
+    try {
+      (config as any).postmanOfficialMcpEnabled = false;
+      const body = (new PostmanProvider() as any).buildRequestBody(
+        { ...request, reasoning_effort: "xhigh", tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }] },
+        { postman_sid: "sid", user_id: "user", workspace_id: "team", workspace_subdomain: "example" },
+        "gpt-5",
+        "7",
+      );
+
+      expect(body.clientTools.native).toEqual([]);
+      expect(body.clientTools.thirdParty).toBeUndefined();
+      expect(body.clientKBTerms.native).toEqual([]);
+      expect(body.availableSkills).toBeUndefined();
+      expect(body.devModeOptions.autoRun).toBe(false);
+      expect(body.devModeOptions.supportsActionRecommendations).toBe(false);
+      expect(body.devModeOptions.thinkingLevel).toBe("high");
+      expect(body.devModeOptions.ai_user_agent_mode).toBe(true);
+      expect(body.devModeOptions.agentMode).toBe(true);
+      expect(body.userSettings.ai_user_agent_mode).toBe(true);
+    } finally {
+      (config as any).postmanOfficialMcpEnabled = originalMcpFlag;
+    }
+  });
+
+  test("sends client tool metadata only when official Postman MCP is explicitly enabled", () => {
+    const originalMcpFlag = (config as any).postmanOfficialMcpEnabled;
+    try {
+      (config as any).postmanOfficialMcpEnabled = true;
+      const body = (new PostmanProvider() as any).buildRequestBody(
+        { ...request, tools: [{ type: "function", function: { name: "lookup", description: "Lookup data", parameters: { type: "object" } } }] },
+        { postman_sid: "sid", user_id: "user", workspace_id: "team", workspace_subdomain: "example" },
+        "gpt-5",
+        "7",
+      );
+
+      expect(body.clientTools.native).toEqual([]);
+      expect(body.clientTools.thirdParty["proxy-tools"].tools[0].name).toBe("lookup");
+      expect(body.clientKBTerms.native).toEqual([]);
+      expect(body.availableSkills).toEqual([]);
+      expect(body.devModeOptions.autoRun).toBe(true);
+      expect(body.devModeOptions.supportsActionRecommendations).toBe(true);
+    } finally {
+      (config as any).postmanOfficialMcpEnabled = originalMcpFlag;
+    }
+  });
+
+  test("keeps Agent Mode request metadata current", () => {
+    const body = (new PostmanProvider() as any).buildRequestBody(
+      { ...request, reasoning_effort: "xhigh" },
+      { postman_sid: "sid", user_id: "user", workspace_id: "team", workspace_subdomain: "example" },
+      "gpt-5",
+      "7",
+    );
+
+    expect(body.devModeOptions.thinkingLevel).toBe("high");
+    expect(body.devModeOptions.ai_user_agent_mode).toBe(true);
+    expect(body.devModeOptions.agentMode).toBe(true);
+    expect(body.userSettings.ai_user_agent_mode).toBe(true);
+  });
+
+  test("enables the account-level ai_user_agent_mode setting through the workspace API", async () => {
+    const originalFetch = globalThis.fetch;
+    let requestUrl = "";
+    let requestInit: RequestInit | undefined;
+
+    try {
+      globalThis.fetch = (async (url, init) => {
+        requestUrl = String(url);
+        requestInit = init;
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch;
+
+      const result = await new PostmanProvider().ensureAiUserAgentMode(account);
+      const body = JSON.parse(String(requestInit?.body));
+
+      expect(result.success).toBe(true);
+      expect(requestUrl).toBe("https://example.postman.co/_api/user/settings/ai_user_agent_mode");
+      expect(requestInit?.method).toBe("PUT");
+      expect(body).toEqual({ value: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("returns quotaExhausted before exposing an HTTP 200 stream", async () => {
@@ -545,6 +649,7 @@ describe("account availability test", () => {
     const originals = {
       validateAccount: providerPrototype.validateAccount,
       fetchQuota: providerPrototype.fetchQuota,
+      ensureAiUserAgentMode: providerPrototype.ensureAiUserAgentMode,
       chatCompletion: providerPrototype.chatCompletion,
     };
     let receivedRequest: any;
@@ -555,6 +660,7 @@ describe("account availability test", () => {
         success: true,
         quota: { limit: 100, used: 10, remaining: 90, overageAllowed: false },
       });
+      providerPrototype.ensureAiUserAgentMode = async () => ({ success: true, enabled: true });
       providerPrototype.chatCompletion = async (_account: any, request: any) => {
         receivedRequest = request;
         return {
@@ -579,11 +685,13 @@ describe("account availability test", () => {
       expect(result.available).toBe(true);
       expect(result.prompt).toBe(ACCOUNT_TEST_PROMPT);
       expect(receivedRequest.messages).toEqual([{ role: "user", content: ACCOUNT_TEST_PROMPT }]);
+      expect(result.logs.some((entry) => entry.step === "Agent Mode" && entry.level === "success")).toBe(true);
       expect(result.logs.some((entry) => entry.step === "回复" && entry.message === "POSTMAN2API_OK")).toBe(true);
       expect((pool as any).getInFlightCount(created!.id)).toBe(0);
     } finally {
       providerPrototype.validateAccount = originals.validateAccount;
       providerPrototype.fetchQuota = originals.fetchQuota;
+      providerPrototype.ensureAiUserAgentMode = originals.ensureAiUserAgentMode;
       providerPrototype.chatCompletion = originals.chatCompletion;
       await db.delete(accounts).where(eq(accounts.id, created!.id));
     }
