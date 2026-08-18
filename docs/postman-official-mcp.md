@@ -2,6 +2,35 @@
 
 Postman 官方 MCP Server 是给外部 AI Agent 使用的工具服务器，用于读写 Postman workspace、collection、environment、API、mock server、monitor 等资源。本项目不是 MCP Server；本项目是 OpenAI / Anthropic 兼容代理服务。
 
+
+## 官方资料入口
+
+- 官方概览：https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/overview/
+- 远程 MCP Server：https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-remote-server
+- 本地 MCP Server：https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/postman-mcp-local-server
+
+## Codex 示例
+
+远程 US minimal（OAuth）：
+
+```bash
+codex mcp add postman --remote-url https://mcp.postman.com/minimal
+```
+
+远程 US full（OAuth）：
+
+```bash
+codex mcp add postman --remote-url https://mcp.postman.com/mcp
+```
+
+本地或 API key 模式：
+
+```bash
+codex mcp add postman --env POSTMAN_API_KEY=<POSTMAN_API_KEY> -- npx @postman/postman-mcp-server --minimal
+codex mcp add postman --env POSTMAN_API_KEY=<POSTMAN_API_KEY> -- npx @postman/postman-mcp-server --code
+codex mcp add postman --env POSTMAN_API_KEY=<POSTMAN_API_KEY> -- npx @postman/postman-mcp-server --full
+```
+
 ## 两种接入方式
 
 ### 方式 A：在你的 Agent / IDE 中直接配置 Postman MCP
