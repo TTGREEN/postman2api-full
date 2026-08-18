@@ -22,6 +22,19 @@ function Resolve-FullPath([string]$Path) {
   [System.IO.Path]::GetFullPath($Path)
 }
 
+function Write-Utf8NoBom([string]$Path, [string]$Value) {
+  $dir = Split-Path -Parent $Path
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  [System.IO.File]::WriteAllText($Path, $Value, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Write-JsonNoBom([string]$Path, $Value, [int]$Depth = 10) {
+  $json = $Value | ConvertTo-Json -Depth $Depth
+  Write-Utf8NoBom $Path ($json + [Environment]::NewLine)
+}
+
 function Get-RelativePathCompat([string]$BasePath, [string]$FullPath) {
   $baseFull = [System.IO.Path]::GetFullPath($BasePath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
   $full = [System.IO.Path]::GetFullPath($FullPath)
@@ -65,7 +78,10 @@ function Test-PayloadExcludedPath([string]$RelativePath) {
   if ($normalized -eq ".test-state" -or $normalized.StartsWith(".test-state/")) { return $true }
   if ($normalized -eq ".test-orchestrator" -or $normalized.StartsWith(".test-orchestrator/")) { return $true }
   if ($normalized -eq ".env" -or $normalized -like ".env.*") { return $true }
-  if ($normalized -like "*.db" -or $normalized -like "*.db-wal" -or $normalized -like "*.db-shm") { return $true }
+  if ($normalized -eq "data" -or $normalized.StartsWith("data/")) { return $true }
+  if ($normalized -eq "tokens" -or $normalized.StartsWith("tokens/")) { return $true }
+  if ($normalized -eq "tokens copy" -or $normalized.StartsWith("tokens copy/")) { return $true }
+  if ($normalized -like "data/*.db" -or $normalized -like "data/*.db-wal" -or $normalized -like "data/*.db-shm") { return $true }
   if ($normalized -like "*.log") { return $true }
   return $false
 }
@@ -194,16 +210,298 @@ function Get-CamoufoxVersionInfo([string]$Path) {
 function Ensure-CamoufoxVersionJson([string]$CamoufoxRoot, [string]$SourcePath) {
   if (-not (Test-Path -LiteralPath $CamoufoxRoot)) { return $false }
   $versionPath = Join-Path $CamoufoxRoot "version.json"
-  if (Test-Path -LiteralPath $versionPath) { return $false }
+  if (Test-Path -LiteralPath $versionPath) {
+    $raw = [System.IO.File]::ReadAllText($versionPath)
+    $trimmed = $raw.TrimStart([char]0xFEFF)
+    try {
+      $parsed = $trimmed | ConvertFrom-Json -ErrorAction Stop
+      Write-JsonNoBom $versionPath ([ordered]@{ version = [string]$parsed.version; release = [string]$parsed.release }) 4
+      return $raw.StartsWith([string][char]0xFEFF)
+    }
+    catch {
+      # Fall through and regenerate malformed version metadata.
+    }
+  }
   $info = Get-CamoufoxVersionInfo $SourcePath
-  $info | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $versionPath -Encoding UTF8
+  Write-JsonNoBom $versionPath $info 4
   return $true
 }
 
 function Write-DeployScript([string]$ReleaseRoot) {
-  $deployB64 = "JEVycm9yQWN0aW9uUHJlZmVyZW5jZSA9ICJTdG9wIgpTZXQtU3RyaWN0TW9kZSAtVmVyc2lvbiBMYXRlc3QKCiRyb290ID0gU3BsaXQtUGF0aCAtUGFyZW50ICRNeUludm9jYXRpb24uTXlDb21tYW5kLlBhdGgKU2V0LUxvY2F0aW9uICRyb290CgpmdW5jdGlvbiBUZXN0LVRvb2woW3N0cmluZ10kTmFtZSkgewogIHJldHVybiBbYm9vbF0oR2V0LUNvbW1hbmQgJE5hbWUgLUVycm9yQWN0aW9uIFNpbGVudGx5Q29udGludWUpCn0KCmZ1bmN0aW9uIEVuc3VyZS1EaXJlY3RvcnkoW3N0cmluZ10kUGF0aCkgewogIGlmICgtbm90IChUZXN0LVBhdGggLUxpdGVyYWxQYXRoICRQYXRoKSkgewogICAgTmV3LUl0ZW0gLUl0ZW1UeXBlIERpcmVjdG9yeSAtRm9yY2UgLVBhdGggJFBhdGggfCBPdXQtTnVsbAogIH0KfQoKZnVuY3Rpb24gQWRkLUVudlZhbHVlSWZNaXNzaW5nKFtzdHJpbmddJE5hbWUsIFtzdHJpbmddJFZhbHVlKSB7CiAgJGVudlBhdGggPSBKb2luLVBhdGggJHJvb3QgIi5lbnYiCiAgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJGVudlBhdGgpKSB7IHJldHVybiB9CiAgJHBhdHRlcm4gPSAiXlxzKiIgKyBbcmVnZXhdOjpFc2NhcGUoJE5hbWUpICsgIlxzKj0iCiAgaWYgKC1ub3QgKFNlbGVjdC1TdHJpbmcgLUxpdGVyYWxQYXRoICRlbnZQYXRoIC1QYXR0ZXJuICRwYXR0ZXJuIC1RdWlldCkpIHsKICAgIEFkZC1Db250ZW50IC1MaXRlcmFsUGF0aCAkZW52UGF0aCAtRW5jb2RpbmcgVVRGOCAtVmFsdWUgIiROYW1lPSRWYWx1ZSIKICAgIFdyaXRlLUhvc3QgIkFkZGVkIHNldHRpbmcgdG8gLmVudjogJE5hbWUiCiAgfSBlbHNlIHsKICAgIFdyaXRlLUhvc3QgIlByZXNlcnZlZCBleGlzdGluZyAuZW52IHNldHRpbmc6ICROYW1lIgogIH0KfQoKZnVuY3Rpb24gRW5zdXJlLUJ1bigpIHsKICBpZiAoVGVzdC1Ub29sICJidW4iKSB7CiAgICBXcml0ZS1Ib3N0ICJCdW4gZGV0ZWN0ZWQuIgogICAgcmV0dXJuCiAgfQoKICBXcml0ZS1Ib3N0ICJCdW4gbm90IGZvdW5kLiBJbnN0YWxsaW5nIEJ1biBydW50aW1lLi4uIgogIGlmIChUZXN0LVRvb2wgIm5wbSIpIHsKICAgIG5wbSBpbnN0YWxsIC1nIGJ1bgogICAgaWYgKCRMQVNURVhJVENPREUgLW5lIDApIHsgdGhyb3cgIkJ1biBpbnN0YWxsIHRocm91Z2ggbnBtIGZhaWxlZC4iIH0KICB9IGVsc2UgewogICAgJGluc3RhbGxlciA9IEpvaW4tUGF0aCAkZW52OlRFTVAgImJ1bi1pbnN0YWxsLnBzMSIKICAgIEludm9rZS1XZWJSZXF1ZXN0IC1Vc2VCYXNpY1BhcnNpbmcgLVVyaSAiaHR0cHM6Ly9idW4uc2gvaW5zdGFsbC5wczEiIC1PdXRGaWxlICRpbnN0YWxsZXIKICAgIHBvd2Vyc2hlbGwgLUV4ZWN1dGlvblBvbGljeSBCeXBhc3MgLUZpbGUgJGluc3RhbGxlcgogICAgJGJ1bkJpbiA9IEpvaW4tUGF0aCAkZW52OlVTRVJQUk9GSUxFICIuYnVuXGJpbiIKICAgIGlmIChUZXN0LVBhdGggLUxpdGVyYWxQYXRoICRidW5CaW4pIHsKICAgICAgJGVudjpQQVRIID0gIiRidW5CaW47JGVudjpQQVRIIgogICAgfQogIH0KCiAgaWYgKC1ub3QgKFRlc3QtVG9vbCAiYnVuIikpIHsKICAgIHRocm93ICJCdW4gaW5zdGFsbGF0aW9uIGZpbmlzaGVkIGJ1dCBidW4gaXMgc3RpbGwgbm90IGF2YWlsYWJsZSBpbiB0aGlzIHNoZWxsLiBSZW9wZW4gUG93ZXJTaGVsbCBhbmQgcnVuIGRlcGxveS5wczEgYWdhaW4uIgogIH0KfQoKV3JpdGUtSG9zdCAiPT0gcG9zdG1hbjJhcGkgb25lLWNsaWNrIGRlcGxveSA9PSIKV3JpdGUtSG9zdCAiUHJvamVjdDogJHJvb3QiCgppZiAoLW5vdCAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAoSm9pbi1QYXRoICRyb290ICIuZW52IikpKSB7CiAgaWYgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggKEpvaW4tUGF0aCAkcm9vdCAiLmVudi5leGFtcGxlIikpIHsKICAgIENvcHktSXRlbSAtTGl0ZXJhbFBhdGggKEpvaW4tUGF0aCAkcm9vdCAiLmVudi5leGFtcGxlIikgLURlc3RpbmF0aW9uIChKb2luLVBhdGggJHJvb3QgIi5lbnYiKSAtRm9yY2UKICAgIFdyaXRlLUhvc3QgIkNyZWF0ZWQgLmVudiBmcm9tIC5lbnYuZXhhbXBsZS4iCiAgfSBlbHNlIHsKICAgIFdyaXRlLUhvc3QgIi5lbnYgbm90IGZvdW5kIGFuZCAuZW52LmV4YW1wbGUgaXMgbWlzc2luZzsga2VlcGluZyBkZXBsb3ltZW50IHdpdGhvdXQgY3JlYXRpbmcgLmVudi4iCiAgfQp9IGVsc2UgewogIFdyaXRlLUhvc3QgIlByZXNlcnZlZCBleGlzdGluZyAuZW52LiIKfQoKJGRhdGFEaXIgPSBKb2luLVBhdGggJHJvb3QgImRhdGEiCkVuc3VyZS1EaXJlY3RvcnkgJGRhdGFEaXIKJGRlZmF1bHREYiA9IEpvaW4tUGF0aCAkZGF0YURpciAicG9zdG1hbjJhcGkuZGIiCmlmIChUZXN0LVBhdGggLUxpdGVyYWxQYXRoICRkZWZhdWx0RGIpIHsKICBXcml0ZS1Ib3N0ICJQcmVzZXJ2ZWQgZXhpc3RpbmcgZGF0YWJhc2U6IGRhdGFccG9zdG1hbjJhcGkuZGIiCn0gZWxzZSB7CiAgV3JpdGUtSG9zdCAiRGF0YWJhc2UgZmlsZSBub3QgZm91bmQ7IG1pZ3JhdGlvbiB3aWxsIGNyZWF0ZSBpdCBpZiBkZWZhdWx0IERBVEFCQVNFX1BBVEggaXMgdXNlZC4iCn0KCiRjYW1vdWZveFJvb3QgPSBKb2luLVBhdGggJHJvb3QgInJ1bnRpbWVcY2Ftb3Vmb3giCiRjYW1vdWZveEV4ZSA9IEpvaW4tUGF0aCAkY2Ftb3Vmb3hSb290ICJjYW1vdWZveC5leGUiCmlmIChUZXN0LVBhdGggLUxpdGVyYWxQYXRoICRjYW1vdWZveEV4ZSkgewogICR2ZXJzaW9uUGF0aCA9IEpvaW4tUGF0aCAkY2Ftb3Vmb3hSb290ICJ2ZXJzaW9uLmpzb24iCiAgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJHZlcnNpb25QYXRoKSkgewogICAgQHsgdmVyc2lvbiA9ICIxNTIuMC40IjsgcmVsZWFzZSA9ICJiZXRhLjI4IiB9IHwgQ29udmVydFRvLUpzb24gfCBTZXQtQ29udGVudCAtTGl0ZXJhbFBhdGggJHZlcnNpb25QYXRoIC1FbmNvZGluZyBVVEY4CiAgICBXcml0ZS1Ib3N0ICJDcmVhdGVkIHJ1bnRpbWVcY2Ftb3Vmb3hcdmVyc2lvbi5qc29uLiIKICB9CiAgJGVudjpDQU1PVUZPWF9JTlNUQUxMX0RJUiA9ICRjYW1vdWZveFJvb3QKICAkZW52OkNBTU9VRk9YX1NLSVBfQlJPV1NFUl9ET1dOTE9BRCA9ICIxIgogICRlbnY6UExBWVdSSUdIVF9TS0lQX0JST1dTRVJfRE9XTkxPQUQgPSAiMSIKICBBZGQtRW52VmFsdWVJZk1pc3NpbmcgIkNBTU9VRk9YX0lOU1RBTExfRElSIiAkY2Ftb3Vmb3hSb290CiAgQWRkLUVudlZhbHVlSWZNaXNzaW5nICJDQU1PVUZPWF9TS0lQX0JST1dTRVJfRE9XTkxPQUQiICIxIgogIEFkZC1FbnZWYWx1ZUlmTWlzc2luZyAiUExBWVdSSUdIVF9TS0lQX0JST1dTRVJfRE9XTkxPQUQiICIxIgogIFdyaXRlLUhvc3QgIkJ1bmRsZWQgQ2Ftb3Vmb3ggcnVudGltZSBkZXRlY3RlZC4gQnJvd3NlciBkb3dubG9hZCBpcyBza2lwcGVkLiIKfSBlbHNlIHsKICBXcml0ZS1Ib3N0ICJCdW5kbGVkIENhbW91Zm94IHJ1bnRpbWUgbm90IGZvdW5kLiBEZXBlbmRlbmN5IGluc3RhbGwgbWF5IGRvd25sb2FkIGJyb3dzZXIgYXNzZXRzIGlmIG5lZWRlZC4iCn0KCkVuc3VyZS1CdW4KCiRyb290RGVwc09rID0gKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggKEpvaW4tUGF0aCAkcm9vdCAibm9kZV9tb2R1bGVzXGhvbm8iKSkgLWFuZCAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAoSm9pbi1QYXRoICRyb290ICJub2RlX21vZHVsZXNcY2Ftb3Vmb3gtanMiKSkgLWFuZCAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAoSm9pbi1QYXRoICRyb290ICJub2RlX21vZHVsZXNccGxheXdyaWdodCIpKQppZiAoJHJvb3REZXBzT2spIHsKICBXcml0ZS1Ib3N0ICJSb290IGRlcGVuZGVuY2llcyBhcmUgYWxyZWFkeSBpbmNsdWRlZC4iCn0gZWxzZSB7CiAgV3JpdGUtSG9zdCAiUm9vdCBkZXBlbmRlbmNpZXMgbWlzc2luZzsgcnVubmluZyBidW4gaW5zdGFsbC4iCiAgYnVuIGluc3RhbGwKICBpZiAoJExBU1RFWElUQ09ERSAtbmUgMCkgeyB0aHJvdyAiYnVuIGluc3RhbGwgZmFpbGVkLiIgfQp9CgokZGFzaGJvYXJkUm9vdCA9IEpvaW4tUGF0aCAkcm9vdCAiZGFzaGJvYXJkIgppZiAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAoSm9pbi1QYXRoICRkYXNoYm9hcmRSb290ICJwYWNrYWdlLmpzb24iKSkgewogICRkYXNoYm9hcmREZXBzT2sgPSAoVGVzdC1QYXRoIC1MaXRlcmFsUGF0aCAoSm9pbi1QYXRoICRkYXNoYm9hcmRSb290ICJub2RlX21vZHVsZXNcdml0ZSIpKSAtYW5kIChUZXN0LVBhdGggLUxpdGVyYWxQYXRoIChKb2luLVBhdGggJGRhc2hib2FyZFJvb3QgIm5vZGVfbW9kdWxlc1xyZWFjdCIpKQogIGlmICgkZGFzaGJvYXJkRGVwc09rKSB7CiAgICBXcml0ZS1Ib3N0ICJEYXNoYm9hcmQgZGVwZW5kZW5jaWVzIGFyZSBhbHJlYWR5IGluY2x1ZGVkLiIKICB9IGVsc2UgewogICAgV3JpdGUtSG9zdCAiRGFzaGJvYXJkIGRlcGVuZGVuY2llcyBtaXNzaW5nOyBpbnN0YWxsaW5nIGRhc2hib2FyZCBkZXBlbmRlbmNpZXMuIgogICAgUHVzaC1Mb2NhdGlvbiAkZGFzaGJvYXJkUm9vdAogICAgdHJ5IHsKICAgICAgYnVuIGluc3RhbGwKICAgICAgaWYgKCRMQVNURVhJVENPREUgLW5lIDApIHsgdGhyb3cgImRhc2hib2FyZCBidW4gaW5zdGFsbCBmYWlsZWQuIiB9CiAgICB9IGZpbmFsbHkgewogICAgICBQb3AtTG9jYXRpb24KICAgIH0KICB9Cn0KCiRkaXN0SW5kZXggPSBKb2luLVBhdGggJGRhc2hib2FyZFJvb3QgImRpc3RcaW5kZXguaHRtbCIKaWYgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJGRpc3RJbmRleCkgewogIFdyaXRlLUhvc3QgIkRhc2hib2FyZCBidWlsZCBvdXRwdXQgYWxyZWFkeSBleGlzdHMuIgp9IGVsc2UgewogIFdyaXRlLUhvc3QgIkRhc2hib2FyZCBidWlsZCBvdXRwdXQgbWlzc2luZzsgYnVpbGRpbmcgZGFzaGJvYXJkLiIKICBidW4gcnVuIGJ1aWxkCiAgaWYgKCRMQVNURVhJVENPREUgLW5lIDApIHsgdGhyb3cgImJ1biBydW4gYnVpbGQgZmFpbGVkLiIgfQp9CgpXcml0ZS1Ib3N0ICJSdW5uaW5nIGRhdGFiYXNlIG1pZ3JhdGlvbiB3aXRob3V0IHJlcGxhY2luZyBleGlzdGluZyBkYXRhLi4uIgpidW4gcnVuIG1pZ3JhdGUKaWYgKCRMQVNURVhJVENPREUgLW5lIDApIHsgdGhyb3cgImJ1biBydW4gbWlncmF0ZSBmYWlsZWQuIiB9CgpXcml0ZS1Ib3N0ICIiCldyaXRlLUhvc3QgIkRlcGxveW1lbnQgY2hlY2sgZmluaXNoZWQuIgpXcml0ZS1Ib3N0ICJTdGFydCBzZXJ2aWNlIHdpdGg6IGJ1biBydW4gc3RhcnQiCg=="
-  $deploy = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($deployB64))
-  Set-Content -LiteralPath (Join-Path $ReleaseRoot "deploy.ps1") -Value $deploy -Encoding UTF8
+  $deploy = @'
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $root
+
+function Test-Tool([string]$Name) {
+  return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Ensure-Directory([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) {
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+  }
+}
+
+function Write-Utf8NoBom([string]$Path, [string]$Value) {
+  $dir = Split-Path -Parent $Path
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  [System.IO.File]::WriteAllText($Path, $Value, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Write-JsonNoBom([string]$Path, $Value, [int]$Depth = 10) {
+  $json = $Value | ConvertTo-Json -Depth $Depth
+  Write-Utf8NoBom $Path ($json + [Environment]::NewLine)
+}
+
+function Set-EnvValue([string]$Name, [string]$Value) {
+  $envPath = Join-Path $root ".env"
+  if (-not (Test-Path -LiteralPath $envPath)) { return }
+  $pattern = "^\s*" + [regex]::Escape($Name) + "\s*="
+  $lines = [System.Collections.Generic.List[string]]::new()
+  if (Test-Path -LiteralPath $envPath) {
+    [string[]]$existing = [System.IO.File]::ReadAllLines($envPath)
+    foreach ($line in $existing) { $lines.Add($line) }
+  }
+  $updated = $false
+  for ($i = 0; $i -lt $lines.Count; $i += 1) {
+    if ($lines[$i] -match $pattern) {
+      $lines[$i] = "$Name=$Value"
+      $updated = $true
+    }
+  }
+  if (-not $updated) {
+    $lines.Add("$Name=$Value")
+    Write-Host "Added setting to .env: $Name"
+  } else {
+    Write-Host "Updated deployment-managed .env setting: $Name"
+  }
+  Write-Utf8NoBom $envPath (($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+}
+
+function Ensure-Bun() {
+  if (Test-Tool "bun") {
+    Write-Host "Bun detected."
+    return
+  }
+
+  Write-Host "Bun not found. Installing Bun runtime..."
+  if (Test-Tool "npm") {
+    npm install -g bun
+    if ($LASTEXITCODE -ne 0) { throw "Bun install through npm failed." }
+  } else {
+    $installer = Join-Path $env:TEMP "bun-install.ps1"
+    Invoke-WebRequest -UseBasicParsing -Uri "https://bun.sh/install.ps1" -OutFile $installer
+    powershell -ExecutionPolicy Bypass -File $installer
+    $bunBin = Join-Path $env:USERPROFILE ".bun\bin"
+    if (Test-Path -LiteralPath $bunBin) {
+      $env:PATH = "$bunBin;$env:PATH"
+    }
+  }
+
+  if (-not (Test-Tool "bun")) {
+    throw "Bun installation finished but bun is still not available in this shell. Reopen PowerShell and run deploy.ps1 again."
+  }
+}
+
+function Ensure-CamoufoxRuntime() {
+  $camoufoxRoot = Join-Path $root "runtime\camoufox"
+  $camoufoxExe = Join-Path $camoufoxRoot "camoufox.exe"
+  if (-not (Test-Path -LiteralPath $camoufoxExe)) {
+    Write-Host "Bundled Camoufox runtime not found; dependency install may download browser assets if needed."
+    return
+  }
+
+  $versionPath = Join-Path $camoufoxRoot "version.json"
+  $defaultVersion = [ordered]@{ version = "152.0.4"; release = "beta.28" }
+  if (Test-Path -LiteralPath $versionPath) {
+    $raw = [System.IO.File]::ReadAllText($versionPath)
+    $trimmed = $raw.TrimStart([char]0xFEFF)
+    try {
+      $parsed = $trimmed | ConvertFrom-Json -ErrorAction Stop
+      $defaultVersion = [ordered]@{ version = [string]$parsed.version; release = [string]$parsed.release }
+    } catch {
+      Write-Host "Rewriting malformed runtime\camoufox\version.json."
+    }
+  }
+  Write-JsonNoBom $versionPath $defaultVersion 4
+
+  $env:CAMOUFOX_INSTALL_DIR = $camoufoxRoot
+  $env:CAMOUFOX_SKIP_BROWSER_DOWNLOAD = "1"
+  $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
+  Set-EnvValue "CAMOUFOX_INSTALL_DIR" $camoufoxRoot
+  Set-EnvValue "CAMOUFOX_SKIP_BROWSER_DOWNLOAD" "1"
+  Set-EnvValue "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD" "1"
+  Write-Host "Bundled Camoufox runtime enabled."
+}
+
+function Test-RootDependencies() {
+  return (Test-Path -LiteralPath (Join-Path $root "node_modules\hono")) -and
+    (Test-Path -LiteralPath (Join-Path $root "node_modules\camoufox-js")) -and
+    (Test-Path -LiteralPath (Join-Path $root "node_modules\playwright"))
+}
+
+function Assert-CamoufoxDataFiles() {
+  $webglDb = Join-Path $root "node_modules\camoufox-js\dist\data-files\webgl_data.db"
+  if (-not (Test-Path -LiteralPath $webglDb)) {
+    throw "camoufox-js WebGL fingerprint database is missing. Re-run deploy.ps1 from a complete release package."
+  }
+}
+
+Write-Host "== postman2api one-click deploy =="
+Write-Host "Project: $root"
+
+$envPath = Join-Path $root ".env"
+if (-not (Test-Path -LiteralPath $envPath)) {
+  $examplePath = Join-Path $root ".env.example"
+  if (Test-Path -LiteralPath $examplePath) {
+    Copy-Item -LiteralPath $examplePath -Destination $envPath -Force
+    Write-Host "Created .env from .env.example."
+  } else {
+    Write-Host ".env not found and .env.example is missing; continuing without creating .env."
+  }
+} else {
+  Write-Host "Preserved existing .env."
+}
+
+Ensure-Directory (Join-Path $root "data")
+Ensure-CamoufoxRuntime
+Ensure-Bun
+
+if (Test-RootDependencies) {
+  Write-Host "Root dependencies are already included."
+} else {
+  Write-Host "Root dependencies missing; running bun install."
+  bun install
+  if ($LASTEXITCODE -ne 0) { throw "bun install failed." }
+}
+Assert-CamoufoxDataFiles
+
+$dashboardRoot = Join-Path $root "dashboard"
+if (Test-Path -LiteralPath (Join-Path $dashboardRoot "package.json")) {
+  $dashboardDepsOk = (Test-Path -LiteralPath (Join-Path $dashboardRoot "node_modules\vite")) -and
+    (Test-Path -LiteralPath (Join-Path $dashboardRoot "node_modules\react"))
+  if ($dashboardDepsOk) {
+    Write-Host "Dashboard dependencies are already included."
+  } else {
+    Write-Host "Dashboard dependencies missing; installing dashboard dependencies."
+    Push-Location $dashboardRoot
+    try {
+      bun install
+      if ($LASTEXITCODE -ne 0) { throw "dashboard bun install failed." }
+    } finally {
+      Pop-Location
+    }
+  }
+}
+
+if (Test-Path -LiteralPath (Join-Path $dashboardRoot "dist\index.html")) {
+  Write-Host "Dashboard build output already exists."
+} else {
+  Write-Host "Dashboard build output missing; building dashboard."
+  bun run build
+  if ($LASTEXITCODE -ne 0) { throw "bun run build failed." }
+}
+
+Write-Host "Running database migration without replacing existing data..."
+bun run migrate
+if ($LASTEXITCODE -ne 0) { throw "bun run migrate failed." }
+
+Write-Host ""
+Write-Host "Deployment check finished."
+Write-Host "Start service with: .\start-service.ps1"
+Write-Host "Dashboard: http://127.0.0.1:1930/"
+Write-Host "OpenAI endpoint: http://127.0.0.1:1930/v1/chat/completions"
+'@
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "deploy.ps1") $deploy
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "$([char]0x4E00)$([char]0x952E)$([char]0x90E8)$([char]0x7F72).ps1") $deploy
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "$([char]0x4E00)$([char]0x952E)$([char]0x90E8)$([char]0x7F72).cmd") "@echo off`r`npowershell -ExecutionPolicy Bypass -File ""%~dp0deploy.ps1""`r`npause`r`n"
+}
+
+function Write-StartScript([string]$ReleaseRoot) {
+  $start = @'
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $root
+
+function Test-Tool([string]$Name) {
+  return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Write-Utf8NoBom([string]$Path, [string]$Value) {
+  $dir = Split-Path -Parent $Path
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  }
+  [System.IO.File]::WriteAllText($Path, $Value, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Write-JsonNoBom([string]$Path, $Value, [int]$Depth = 10) {
+  $json = $Value | ConvertTo-Json -Depth $Depth
+  Write-Utf8NoBom $Path ($json + [Environment]::NewLine)
+}
+
+function Enable-CamoufoxRuntime() {
+  $camoufoxRoot = Join-Path $root "runtime\camoufox"
+  $camoufoxExe = Join-Path $camoufoxRoot "camoufox.exe"
+  if (-not (Test-Path -LiteralPath $camoufoxExe)) {
+    throw "Bundled Camoufox runtime is missing. Run deploy.ps1 from a complete release package first."
+  }
+
+  $versionPath = Join-Path $camoufoxRoot "version.json"
+  $versionInfo = [ordered]@{ version = "152.0.4"; release = "beta.28" }
+  if (Test-Path -LiteralPath $versionPath) {
+    $raw = [System.IO.File]::ReadAllText($versionPath)
+    $trimmed = $raw.TrimStart([char]0xFEFF)
+    try {
+      $parsed = $trimmed | ConvertFrom-Json -ErrorAction Stop
+      $versionInfo = [ordered]@{ version = [string]$parsed.version; release = [string]$parsed.release }
+    } catch {
+      Write-Host "Rewriting malformed runtime\camoufox\version.json."
+    }
+  }
+  Write-JsonNoBom $versionPath $versionInfo 4
+
+  $env:CAMOUFOX_INSTALL_DIR = $camoufoxRoot
+  $env:CAMOUFOX_SKIP_BROWSER_DOWNLOAD = "1"
+  $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
+}
+
+function Assert-Ready() {
+  if (-not (Test-Tool "bun")) {
+    throw "Bun is not available. Run deploy.ps1 first, then reopen PowerShell if needed."
+  }
+  $webglDb = Join-Path $root "node_modules\camoufox-js\dist\data-files\webgl_data.db"
+  if (-not (Test-Path -LiteralPath $webglDb)) {
+    throw "camoufox-js WebGL fingerprint database is missing. Run deploy.ps1 from a complete release package first."
+  }
+}
+
+Write-Host "== postman2api service startup =="
+Write-Host "Project: $root"
+Enable-CamoufoxRuntime
+Assert-Ready
+
+Write-Host "Running database migration..."
+bun run migrate
+if ($LASTEXITCODE -ne 0) { throw "bun run migrate failed." }
+
+Write-Host ""
+Write-Host "Dashboard: http://127.0.0.1:1930/"
+Write-Host "OpenAI endpoint: http://127.0.0.1:1930/v1/chat/completions"
+Write-Host "Starting service..."
+bun run start
+'@
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "start-service.ps1") $start
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "$([char]0x4E00)$([char]0x952E)$([char]0x542F)$([char]0x52A8)$([char]0x670D)$([char]0x52A1).ps1") $start
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "start-service.cmd") "@echo off`r`npowershell -ExecutionPolicy Bypass -File ""%~dp0start-service.ps1""`r`npause`r`n"
+  Write-Utf8NoBom (Join-Path $ReleaseRoot "$([char]0x4E00)$([char]0x952E)$([char]0x542F)$([char]0x52A8)$([char]0x670D)$([char]0x52A1).cmd") "@echo off`r`npowershell -ExecutionPolicy Bypass -File ""%~dp0start-service.ps1""`r`npause`r`n"
 }
 
 $source = (Resolve-Path -LiteralPath $SourceRoot).Path
@@ -214,7 +512,7 @@ $dashboardDependenciesSource = Join-Path $source "dashboard\node_modules"
 $dashboardDistSource = Join-Path $source "dashboard\dist"
 $camoufoxSourceResolved = if (Test-Path -LiteralPath $CamoufoxSource) { (Resolve-Path -LiteralPath $CamoufoxSource).Path } else { $CamoufoxSource }
 
-if ($DryRun) {
+  if ($DryRun) {
   $candidateFiles = Get-ChildItem -LiteralPath $source -Recurse -Force -File |
     Where-Object { -not (Test-ExcludedSourcePath (Get-RelativePathCompat $source $_.FullName)) }
   [ordered]@{
@@ -234,7 +532,7 @@ if ($DryRun) {
     camoufox = Get-TreeStats $camoufoxSourceResolved Payload
     preservedExistingEnv = $true
     preservedExistingDatabase = $true
-    exclusions = @(".env", ".env.*", ".git", "data", ".test-state", ".test-orchestrator", "tokens", "*.db", "*.log")
+    exclusions = @(".env", ".env.*", ".git", "data", ".test-state", ".test-orchestrator", "tokens", "tokens copy", "*.log")
   } | ConvertTo-Json -Depth 8
   exit 0
 }
@@ -284,6 +582,7 @@ try {
   }
 
   Write-DeployScript $staging
+  Write-StartScript $staging
 
   $commit = (git rev-parse HEAD).Trim()
   $branch = (git branch --show-current).Trim()
@@ -306,7 +605,10 @@ try {
     staging = $staging
     zip = $zip
     buildCommand = if ($SkipBuild) { "skipped" } else { "bun run build" }
+    deployScripts = @("deploy.ps1", "$([char]0x4E00)$([char]0x952E)$([char]0x90E8)$([char]0x7F72).ps1", "$([char]0x4E00)$([char]0x952E)$([char]0x90E8)$([char]0x7F72).cmd")
+    startScripts = @("start-service.ps1", "start-service.cmd", "$([char]0x4E00)$([char]0x952E)$([char]0x542F)$([char]0x52A8)$([char]0x670D)$([char]0x52A1).ps1", "$([char]0x4E00)$([char]0x952E)$([char]0x542F)$([char]0x52A8)$([char]0x670D)$([char]0x52A1).cmd")
     deployScript = "deploy.ps1"
+    startScript = "start-service.ps1"
     publishMode = "in-place-preserve-env-and-data"
     preservedExistingEnv = $true
     preservedExistingDatabase = $true
@@ -324,12 +626,12 @@ try {
     release = $releaseStats
     previousOutputBackup = $previousOutputBackup
     previousZipBackup = $null
-    exclusions = @(".env", ".env.*", ".git", "data", ".test-state", ".test-orchestrator", "tokens", "*.db", "*.db-wal", "*.db-shm", "*.log")
+    exclusions = @(".env", ".env.*", ".git", "data", ".test-state", ".test-orchestrator", "tokens", "tokens copy", "*.log")
   }
 
   $previousZipBackup = Backup-ExistingPath $zip
   $manifest["previousZipBackup"] = $previousZipBackup
-  $manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $staging "RELEASE_MANIFEST.json") -Encoding UTF8
+  Write-JsonNoBom (Join-Path $staging "RELEASE_MANIFEST.json") $manifest 10
   Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zip -Force
   Publish-StagingToOutput -StagingRoot $staging -ReleaseRoot $output
   Remove-Item -LiteralPath $staging -Recurse -Force
