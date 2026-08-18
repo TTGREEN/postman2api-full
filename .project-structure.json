@@ -20,7 +20,8 @@
     "scripts": "Repository automation, worker entry points, smoke checks, E2E wrappers, installation helpers, and release/deployment helpers.",
     "src": "Canonical backend application source: API routes, auth, proxy, providers, database, runtime automation orchestration, and WebSocket server.",
     "tests": "Repository-level automated tests and sanitized fixtures for backend, frontend logic, automation runtime, and integration behavior.",
-    "runtime": "Ignored local browser runtime assets. Not canonical source; may be copied into release artifacts only by an approved release script with manifest evidence."
+    "runtime": "Ignored local browser runtime assets. Not canonical source; may be copied into release artifacts only by an approved release script with manifest evidence.",
+    ".github": "GitHub collaboration templates and repository contribution workflow metadata."
   },
   "ignored_paths": [
     ".git/",
@@ -110,7 +111,8 @@
         "docs",
         "packages",
         ".",
-        "examples"
+        "examples",
+        ".github"
       ]
     }
   ]
