@@ -1,0 +1,78 @@
+{
+    "name":  "postman2api-release",
+    "generatedAt":  "2026-08-18T13:02:59.9366194+08:00",
+    "source":  "E:\\反代\\postman2api",
+    "branch":  "main",
+    "commit":  "f07c34e90c7a32a744711c206fb9d9e9d0c75b1f",
+    "dirty":  false,
+    "output":  "E:\\反代\\反代完整版",
+    "staging":  "E:\\反代\\反代完整版.staging-20260818-130203",
+    "zip":  "E:\\反代\\反代完整版.zip",
+    "buildCommand":  "bun run build",
+    "deployScripts":  [
+                          "deploy.ps1",
+                          "一键部署.ps1",
+                          "一键部署.cmd"
+                      ],
+    "startScripts":  [
+                         "start-service.ps1",
+                         "start-service.cmd",
+                         "一键启动服务.ps1",
+                         "一键启动服务.cmd"
+                     ],
+    "deployScript":  "deploy.ps1",
+    "startScript":  "start-service.ps1",
+    "publishMode":  "in-place-preserve-env-and-data",
+    "preservedExistingEnv":  true,
+    "preservedExistingDatabase":  true,
+    "migrationCommand":  "bun run migrate",
+    "dependenciesIncluded":  true,
+    "dashboardDependenciesIncluded":  true,
+    "dashboardDistIncluded":  true,
+    "camoufoxIncluded":  true,
+    "camoufoxSource":  "E:\\反代\\camoufox-152.0.4-beta.28-win.x86_64",
+    "camoufoxVersionJsonGenerated":  true,
+    "rootDependencies":  {
+                             "present":  true,
+                             "fileCount":  6154,
+                             "totalBytes":  155493978,
+                             "sha256":  "0cda461bef9f08edd1f5111b727286951ef82bae71ef04dbbb56ce84e0055ad2"
+                         },
+    "dashboardDependencies":  {
+                                  "present":  true,
+                                  "fileCount":  2306,
+                                  "totalBytes":  43434067,
+                                  "sha256":  "b36cea22243537cade8b06607899181d21fbd44e59dfcb4f6b9e979aa3f0ba8e"
+                              },
+    "dashboardDist":  {
+                          "present":  true,
+                          "fileCount":  3,
+                          "totalBytes":  268030,
+                          "sha256":  "cb0de48980d890e2b7716e2bd493c308d96fb5b637dd83a0699f25c3d9957af9"
+                      },
+    "camoufox":  {
+                     "present":  true,
+                     "fileCount":  494,
+                     "totalBytes":  979351026,
+                     "sha256":  "8dde475849a8ae2af91a5c302b1a0a7574d187d07b3a006fc09c5c23eefcc8b3"
+                 },
+    "release":  {
+                    "present":  true,
+                    "fileCount":  9094,
+                    "totalBytes":  1179490810,
+                    "sha256":  "7575ececad8ede85258e13ab8d668a060101bc025bde376fc0d0ec9e3a50d2c7"
+                },
+    "previousOutputBackup":  null,
+    "previousZipBackup":  "E:\\反代\\反代完整版.zip.backup-20260818-130259",
+    "exclusions":  [
+                       ".env",
+                       ".env.*",
+                       ".git",
+                       "data",
+                       ".test-state",
+                       ".test-orchestrator",
+                       "tokens",
+                       "tokens copy",
+                       "*.log"
+                   ]
+}
