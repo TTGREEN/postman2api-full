@@ -1,11 +1,21 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..\..")).Path
 Set-Location $root
 
 function Test-Tool([string]$Name) {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-ServicePort() {
+  $envPath = Join-Path $root ".env"
+  if (Test-Path -LiteralPath $envPath) {
+    foreach ($line in [System.IO.File]::ReadAllLines($envPath)) {
+      if ($line -match '^\s*PORT\s*=\s*(\d+)\s*$') { return [int]$Matches[1] }
+    }
+  }
+  return 1930
 }
 
 function Ensure-Directory([string]$Path) {
@@ -73,7 +83,7 @@ function Ensure-Bun() {
   }
 
   if (-not (Test-Tool "bun")) {
-    throw "Bun installation finished but bun is still not available in this shell. Reopen PowerShell and run deploy.ps1 again."
+    throw "Bun installation finished but bun is still not available in this shell. Reopen PowerShell and run 一键部署.cmd again."
   }
 }
 
@@ -117,7 +127,7 @@ function Test-RootDependencies() {
 function Assert-CamoufoxDataFiles() {
   $webglDb = Join-Path $root "node_modules\camoufox-js\dist\data-files\webgl_data.db"
   if (-not (Test-Path -LiteralPath $webglDb)) {
-    throw "camoufox-js WebGL fingerprint database is missing. Re-run deploy.ps1 from a complete release package."
+    Write-Warning "缺少 camoufox-js WebGL 指纹数据库，浏览器登录不可用；API 服务与手动导入账号不受影响。"
   }
 }
 
@@ -182,6 +192,7 @@ if ($LASTEXITCODE -ne 0) { throw "bun run migrate failed." }
 
 Write-Host ""
 Write-Host "Deployment check finished."
-Write-Host "Start service with: .\start-service.ps1"
-Write-Host "Dashboard: http://127.0.0.1:1930/"
-Write-Host "OpenAI endpoint: http://127.0.0.1:1930/v1/chat/completions"
+$port = Get-ServicePort
+Write-Host "Start service by double-clicking 一键启动服务.cmd (or: powershell -ExecutionPolicy Bypass -File scripts\ops\windows-service-start.ps1)"
+Write-Host "Dashboard: http://127.0.0.1:$port/"
+Write-Host "OpenAI endpoint: http://127.0.0.1:$port/v1/chat/completions"

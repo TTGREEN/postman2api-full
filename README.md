@@ -58,6 +58,20 @@ bun start
 
 使用 API 前，请先替换 `.env` 中的示例 `API_KEY` 与 `ENCRYPTION_KEY`。不要将该服务暴露到不受信任的网络；管理面板与管理接口仅面向可信的本地或私有环境。
 
+## Windows 一键部署与服务管理
+
+Windows 用户可以直接双击仓库根目录的三个启动器，它们分别调用 `scripts/ops/` 下的 PowerShell 脚本：
+
+| 双击文件 | 等效命令 | 作用 |
+| --- | --- | --- |
+| `一键部署.cmd` | `bun run win:deploy` | 检查/安装 Bun，创建 `.env`，按需安装依赖并构建面板，执行数据库迁移。 |
+| `一键启动服务.cmd` | `bun run win:start` | 后台隐藏窗口启动服务，写入 `data/service.pid`，日志追加到 `data/service.log`。 |
+| `一键停止服务.cmd` | `bun run win:stop` | 按 `data/service.pid` 结束进程树并清理 PID 文件。 |
+
+端口取自 `.env` 的 `PORT`（缺省 `1930`），不是硬编码值。启动脚本会轮询 `/health` 最多 30 秒：只有健康检查通过才报告就绪，进程启动后立即退出会打印日志尾部并以非零码退出。
+
+缺少内置 Camoufox 运行时或 `camoufox-js` 指纹数据库时只会告警而不会中断——API 服务与手动导入账号不依赖浏览器，只有浏览器登录不可用。
+
 ## 连接账号
 
 服务至少需要一个可用的 Postman 账号才能处理聊天请求。

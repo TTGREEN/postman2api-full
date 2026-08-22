@@ -1,6 +1,6 @@
 ﻿$ErrorActionPreference = "Stop"
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..\..")).Path
 $pidFile = Join-Path $root "data\service.pid"
 
 if (-not (Test-Path -LiteralPath $pidFile)) {

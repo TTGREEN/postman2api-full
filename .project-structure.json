@@ -10,7 +10,10 @@
     "README.md",
     "tsconfig.json",
     "CONTRIBUTING.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "一键部署.cmd",
+    "一键启动服务.cmd",
+    "一键停止服务.cmd"
   ],
   "root_file_patterns": [],
   "top_level_directories": {
@@ -85,6 +88,16 @@
     "postman_register_package_policy": "packages/postman-register remains an independent private package. Host integration should prefer package-level exports or a narrow adapter over deep imports from many package internals."
   },
   "file_rules": [
+    {
+      "name": "Windows double-click launchers",
+      "patterns": [
+        "*.cmd"
+      ],
+      "allowed_roots": [
+        ".",
+        "scripts"
+      ]
+    },
     {
       "name": "PowerShell operator scripts",
       "patterns": [

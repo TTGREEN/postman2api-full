@@ -1,11 +1,21 @@
 ﻿$ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = (Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..\..")).Path
 Set-Location $root
 
 function Test-Tool([string]$Name) {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-ServicePort() {
+  $envPath = Join-Path $root ".env"
+  if (Test-Path -LiteralPath $envPath) {
+    foreach ($line in [System.IO.File]::ReadAllLines($envPath)) {
+      if ($line -match '^\s*PORT\s*=\s*(\d+)\s*$') { return [int]$Matches[1] }
+    }
+  }
+  return 1930
 }
 
 function Write-Utf8NoBom([string]$Path, [string]$Value) {
@@ -25,7 +35,8 @@ function Enable-CamoufoxRuntime() {
   $camoufoxRoot = Join-Path $root "runtime\camoufox"
   $camoufoxExe = Join-Path $camoufoxRoot "camoufox.exe"
   if (-not (Test-Path -LiteralPath $camoufoxExe)) {
-    throw "Bundled Camoufox runtime is missing. Run deploy.ps1 from a complete release package first."
+    Write-Warning "未找到内置 Camoufox 运行时 (runtime\camoufox\camoufox.exe)，浏览器登录不可用。API 服务不受影响；需要浏览器登录时请从完整发布包运行 scripts\ops\windows-deploy.ps1。"
+    return
   }
 
   $versionPath = Join-Path $camoufoxRoot "version.json"
@@ -49,17 +60,17 @@ function Enable-CamoufoxRuntime() {
 
 function Assert-Ready() {
   if (-not (Test-Tool "bun")) {
-    throw "Bun is not available. Run deploy.ps1 first, then reopen PowerShell if needed."
+    throw "未检测到 Bun。请先运行 scripts\ops\windows-deploy.ps1（或双击 一键部署.cmd），必要时重开 PowerShell。"
   }
   $webglDb = Join-Path $root "node_modules\camoufox-js\dist\data-files\webgl_data.db"
   if (-not (Test-Path -LiteralPath $webglDb)) {
-    throw "camoufox-js WebGL fingerprint database is missing. Run deploy.ps1 from a complete release package first."
+    Write-Warning "缺少 camoufox-js WebGL 指纹数据库，浏览器登录不可用。API 服务不受影响。"
   }
 }
 
-function Test-ServiceAlive() {
+function Test-ServiceAlive([int]$Port) {
   try {
-    $null = Invoke-WebRequest -Uri "http://127.0.0.1:1930/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+    $null = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
     return $true
   } catch {
     return $false
@@ -71,6 +82,9 @@ Write-Host "目录: $root"
 Enable-CamoufoxRuntime
 Assert-Ready
 
+$port = Get-ServicePort
+$baseUrl = "http://127.0.0.1:$port"
+
 $dataDir = Join-Path $root "data"
 if (-not (Test-Path -LiteralPath $dataDir)) {
   New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
@@ -78,9 +92,9 @@ if (-not (Test-Path -LiteralPath $dataDir)) {
 $pidFile = Join-Path $dataDir "service.pid"
 $logFile = Join-Path $dataDir "service.log"
 
-if (Test-ServiceAlive) {
+if (Test-ServiceAlive $port) {
   Write-Host ""
-  Write-Host "服务已在运行。面板: http://127.0.0.1:1930/"
+  Write-Host "服务已在运行。面板: $baseUrl/"
   exit 0
 }
 
@@ -100,8 +114,8 @@ bun run migrate
 if ($LASTEXITCODE -ne 0) { throw "bun run migrate 失败。" }
 
 Write-Host ""
-Write-Host "面板: http://127.0.0.1:1930/"
-Write-Host "OpenAI 接口: http://127.0.0.1:1930/v1/chat/completions"
+Write-Host "面板: $baseUrl/"
+Write-Host "OpenAI 接口: $baseUrl/v1/chat/completions"
 Write-Host "正在后台启动服务（隐藏窗口，不占用任务栏）..."
 
 $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -113,8 +127,26 @@ $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
 $proc = [System.Diagnostics.Process]::Start($psi)
 
 [System.IO.File]::WriteAllText($pidFile, [string]$proc.Id)
+
+$ready = $false
+foreach ($attempt in 1..30) {
+  Start-Sleep -Seconds 1
+  if (Test-ServiceAlive $port) { $ready = $true; break }
+}
+
+if (-not $ready) {
+  Write-Host ""
+  Write-Host "启动失败：30 秒内 $baseUrl/health 没有响应。"
+  Write-Host "日志: $logFile"
+  if (Test-Path -LiteralPath $logFile) {
+    Write-Host "--- 日志末尾 ---"
+    Get-Content -LiteralPath $logFile -Tail 20
+  }
+  exit 1
+}
+
 Write-Host ""
-Write-Host "服务已在后台启动，本窗口即将关闭。"
+Write-Host "服务已就绪，本窗口即将关闭。"
 Write-Host "PID: $($proc.Id)"
 Write-Host "日志: $logFile"
 Write-Host "停止: 双击 一键停止服务.cmd"
