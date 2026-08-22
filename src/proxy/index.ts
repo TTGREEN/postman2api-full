@@ -24,15 +24,33 @@ export async function handleChatCompletion(
   const requestAbort = new AbortController();
   const detachClientAbort = forwardAbort(signal, requestAbort);
   body.signal = requestAbort.signal;
+  const trace = (stage: string, details: Record<string, unknown> = {}) => {
+    if (!config.postmanFetchVerbose) return;
+    console.error("[proxy] request-stage", {
+      stage,
+      hasSessionId: Boolean(body._sessionId),
+      ...details,
+    });
+  };
+  trace("session-lock-wait");
+  const lockStartedAt = Date.now();
   const releaseSessionLock = await acquireSessionLock(body._sessionId);
+  trace("session-lock-acquired", { waitedMs: Date.now() - lockStartedAt });
   let releaseAfterReturn = true;
   let cleanupAfterReturn = true;
 
   try {
     const prepared = await prepareSession(body._sessionId, body.messages);
     body.messages = prepared.messages;
+    trace("session-prepared", { messageCount: body.messages.length });
     const routed = await routeRequest(body, stream);
     const { result, account, durationMs } = routed;
+    trace("route-complete", {
+      success: result.success,
+      stream: Boolean(result.stream),
+      durationMs,
+      accountId: account.id,
+    });
 
     if (result.success && result.stream) {
       try {
@@ -84,7 +102,7 @@ export async function handleChatCompletion(
       errorMessage: result.error || "Unknown error",
     });
 
-    return errorResponse(result.error || "Unknown error", 503);
+    return errorResponse(result.error || "Unknown error", result.requestRejected ? 400 : 503);
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     await recordRequest({
@@ -249,13 +267,23 @@ function wrapQuotaSafeStream(
 
           const streamFailure = attempt.result.getStreamFailure?.();
           if (streamFailure?.kind !== "quota_exhausted" || cancelled) {
-            throw attemptError;
+            if (!cancelled) {
+              emitStreamError(controller, encoder, chunks, errorMessage);
+            }
+            return;
           }
 
           activeAttempt = await routeRequest(ctx.request, true);
         }
       } catch (error) {
-        if (!cancelled) controller.error(error);
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : String(error);
+          try {
+            emitStreamError(controller, encoder, [], message);
+          } catch {
+            controller.error(error);
+          }
+        }
       } finally {
         clearInterval(keepalive);
         releaseActiveAttempt?.();
@@ -279,6 +307,25 @@ function wrapQuotaSafeStream(
       Connection: "keep-alive",
     },
   });
+}
+
+function emitStreamError(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  bufferedChunks: Uint8Array[],
+  message: string,
+): void {
+  for (const chunk of bufferedChunks) controller.enqueue(chunk);
+  controller.enqueue(encoder.encode(
+    `data: ${JSON.stringify({
+      error: {
+        message,
+        type: "upstream_error",
+      },
+    })}\n\n`,
+  ));
+  controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+  controller.close();
 }
 
 function forwardAbort(source: AbortSignal | undefined, target: AbortController): () => void {
@@ -305,11 +352,16 @@ async function recordRequest(entry: NewRequestLog): Promise<void> {
 }
 
 function errorResponse(message: string, status: number): Response {
+  const type = status === 503
+    ? "no_available_account"
+    : status >= 400 && status < 500
+      ? "invalid_request"
+      : "internal_error";
   return new Response(
     JSON.stringify({
       error: {
         message,
-        type: status === 503 ? "no_available_account" : "internal_error",
+        type,
       },
     }),
     { status, headers: { "Content-Type": "application/json" } },

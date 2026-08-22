@@ -23,5 +23,5 @@
 
 ## Postman MCP 规则
 
-- 默认纯聊天模式：`POSTMAN_OFFICIAL_MCP_ENABLED=false`。
-- 只有已在 Postman 官方界面配置 MCP 服务时，才允许开启 `POSTMAN_OFFICIAL_MCP_ENABLED=true` 并发送 `clientTools.thirdParty`。
+- 不要求在 Postman 官方界面配置 MCP Server。
+- 请求带有客户端 `tools` 时，端口直接转换并发送 `clientTools.thirdParty`；纯聊天请求仍不携带第三方工具列表。

@@ -168,7 +168,7 @@
           },
           "tools": {
             "type": "array",
-            "description": "Forwarded only when POSTMAN_OFFICIAL_MCP_ENABLED=true and upstream Postman MCP is configured."
+            "description": "When present, converted and forwarded as Postman Agent Mode proxy-tools; no separate Postman MCP Server configuration is required."
           },
           "session_id": {
             "type": "string",

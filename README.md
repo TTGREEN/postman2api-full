@@ -129,6 +129,18 @@ curl http://localhost:1930/v1/messages \
 
 Anthropic 模型别名会尽可能做归一化。例如 `claude-sonnet-4-20250514` 会映射为 `claude-sonnet-4-5`。
 
+### 直接工具调用
+
+需要让模型返回工具调用时，直接在请求体发送 `tools`，并给每个对话发送独立的
+`x-session-id`。端口会自动把工具 schema 转成 Postman Agent Mode 的
+`proxy-tools`，不要求在 Postman 官方界面配置 MCP Server。调用端执行 `tool_calls` 后，把 `assistant.tool_calls` 与
+`role: "tool"` 结果追加回同一个请求序列即可。完整的两轮请求示例见
+[直接调用端口并续接工具](docs/direct-tool-calls.md)。
+
+本项目负责协议转换和 Postman conversation 续接，不执行调用端定义的工具，也不在
+本项目保存 MCP API key 或启动 MCP 进程；Postman workspace/account 的工具配置仍
+按部署规则处理。
+
 ### 模型列表
 
 ```bash
@@ -144,7 +156,7 @@ curl http://localhost:1930/v1/models \
 
 - OpenAI/Codex 客户端：识别请求体中的 `session_id` 或 `x-session-id` 请求头。
 - Anthropic 兼容客户端：识别原生会话元数据或请求头。
-- 其他客户端：每个会话发送唯一的 `x-session-id`。
+- 其他客户端：每个会话发送唯一的 `x-session-id`。工具循环尤其建议这样做。
 
 不要为所有终端用户复用一个会话 ID。没有可识别会话的请求保持无状态，按请求均衡分配。`prompt_cache_key` 这类缓存路由值不是会话标识。
 
@@ -167,7 +179,8 @@ curl http://localhost:1930/v1/models \
 | `QUOTA_SAFE_STREAM_BUFFER_BYTES` | `16777216` | 额度安全流式缓冲的最大字节数。 |
 | `STREAM_KEEPALIVE_INTERVAL_MS` | `10000` | 缓冲或重试期间的 SSE 注释心跳间隔。 |
 | `POSTMAN_FETCH_VERBOSE` | `false` | 输出生命周期诊断日志，不包含鉴权头或请求/响应体。 |
-| `POSTMAN_OFFICIAL_MCP_ENABLED` | `false` | 只有已在 Postman 官方界面配置 MCP 服务时才开启；默认纯聊天不发送 MCP/工具元数据。 |
+| `POSTMAN_CONTEXT_PRIMING` | `true` | 冷启动历史超过单次请求上限时，先分段预热上游会话，而不是把内容裁掉。设为 `0`/`false` 关闭。 |
+| `POSTMAN_CONTEXT_PRIMING_MAX_SEGMENTS` | `40` | 单次预热允许的最大分段数；超过则跳过预热并打印截断告警。每个分段都是一次真实上游生成。 |
 | `BATCHER_PROXY_URL` | 未设置 | 浏览器自动化使用的可选代理。 |
 | `LOGIN_BROWSER_BACKEND` | `camoufox` | 登录浏览器后端：`camoufox` 或 `playwright`。 |
 
@@ -236,6 +249,14 @@ bun run smoke:upstream -- --api-key YOUR_API_KEY
 bun run smoke:upstream -- --api-key YOUR_API_KEY --chat --model auto
 ```
 
+超长上下文冒烟检查会在三条路径（OpenAI 流式 / 非流式、Anthropic）上各跑一次冷启动，构造一段远超单次 seeding 上限的历史，并把关键规则放在旧裁剪逻辑会丢掉的中段，验证回答里仍带着这些信息：
+
+```bash
+bun run smoke:context -- --api-key YOUR_LOCAL_API_KEY
+```
+
+该脚本只连接本地 HTTP 端口，不读取也不打印账号 Token。它会消耗真实上游额度（每个预热分段都是一次真实生成）。分段预热的措辞约束见[超长上下文](docs/direct-tool-calls.md#超长上下文)。
+
 ## 架构
 
 ```text
@@ -256,6 +277,7 @@ React dashboard <------ WebSocket updates
 
 - [Postman 账号 Token 获取与 JSON 导入](docs/postman-account-token.md)
 - [Postman 官方 MCP 接入说明](docs/postman-official-mcp.md)
+- [直接调用端口并续接工具](docs/direct-tool-calls.md)
 - [上游兼容监控](docs/upstream-compatibility.md)
 - [发布策略](docs/release-strategy.md)
 - [OpenAPI 描述](docs/openapi.json)

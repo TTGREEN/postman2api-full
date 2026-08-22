@@ -24,6 +24,8 @@ export interface ChatCompletionRequest {
   signal?: AbortSignal;
   _originalModel?: string;
   _sessionId?: string;
+  /** Upstream conversation created by context priming; short-circuits cold-start seeding. */
+  _primedConversationId?: string;
 }
 
 export interface ChatCompletionChoice {
@@ -111,6 +113,9 @@ export interface ProviderResult {
   rateLimited?: boolean;
   retryAfterMs?: number;
   retryable?: boolean;
+  requestRejected?: boolean;
+  mcpRejected?: boolean;
+  mcpFallbackUsed?: boolean;
   tokens?: unknown;
 }
 

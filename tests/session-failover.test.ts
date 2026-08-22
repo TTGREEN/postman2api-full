@@ -52,6 +52,42 @@ afterEach(async () => {
 });
 
 describe("persistent session state", () => {
+  test("returns a client validation error when Postman rejects forwarded tools", async () => {
+    const selected = await createAccount("request-rejected");
+    const poolAny = pool as any;
+    const providerAny = provider as any;
+    const originals = {
+      getActiveAccounts: poolAny.getActiveAccounts,
+      chatCompletion: providerAny.chatCompletion,
+    };
+
+    try {
+      poolAny.getActiveAccounts = async () => [selected];
+      providerAny.chatCompletion = async () => ({
+        success: false,
+        requestRejected: true,
+        mcpRejected: true,
+        error: "INPUT_VALIDATION_ERROR: Forbidden",
+      });
+
+      const response = await handleChatCompletion({
+        model: "auto",
+        messages: [{ role: "user", content: "trigger validation rejection" }],
+        stream: false,
+      });
+      const payload = await response.json() as any;
+
+      expect(response.status).toBe(400);
+      expect(payload.error.type).toBe("invalid_request");
+      expect(payload.error.message).toContain("INPUT_VALIDATION_ERROR: Forbidden");
+      expect((await db.select().from(accounts).where(eq(accounts.id, selected.id)))[0]?.status)
+        .toBe("active");
+    } finally {
+      poolAny.getActiveAccounts = originals.getActiveAccounts;
+      providerAny.chatCompletion = originals.chatCompletion;
+    }
+  });
+
   test("restores stable history when the client sends only the next turn", async () => {
     const id = sessionId("restore");
     await commitSession(
@@ -264,6 +300,59 @@ describe("persistent session state", () => {
         { role: "user", content: "continue safely" },
         { role: "assistant", content: "replacement-complete" },
       ]);
+    } finally {
+      poolAny.getActiveAccounts = originals.getActiveAccounts;
+      poolAny.markUsed = originals.markUsed;
+      providerAny.chatCompletionStream = originals.chatCompletionStream;
+    }
+  });
+
+  test("exposes a post-delta upstream error as an OpenAI-compatible SSE event", async () => {
+    const id = sessionId("stream-error-visible");
+    const account = await createAccount("stream-error-visible");
+    const poolAny = pool as any;
+    const providerAny = provider as any;
+    const originals = {
+      getActiveAccounts: poolAny.getActiveAccounts,
+      markUsed: poolAny.markUsed,
+      chatCompletionStream: providerAny.chatCompletionStream,
+    };
+    const encoder = new TextEncoder();
+    const diagnostic = "MCP diagnostic: pure_chat=pass; noop_tool=fail(INPUT_VALIDATION_ERROR: Forbidden)";
+
+    try {
+      pool.clearRuntimeState();
+      poolAny.getActiveAccounts = async () => [account];
+      poolAny.markUsed = async () => {};
+      providerAny.chatCompletionStream = async () => ({
+        success: true,
+        stream: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode("data: partial-before-error\n\n"));
+          },
+          pull(controller) {
+            controller.error(new Error(diagnostic));
+          },
+        }),
+      });
+
+      const response = await handleChatCompletion({
+        model: "auto",
+        messages: [{ role: "user", content: "trigger upstream error" }],
+        stream: true,
+        _sessionId: id,
+      });
+      const text = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(text).toContain("partial-before-error");
+      expect(text).toContain(JSON.stringify({
+        error: {
+          message: diagnostic,
+          type: "upstream_error",
+        },
+      }));
+      expect(text).toContain("data: [DONE]");
     } finally {
       poolAny.getActiveAccounts = originals.getActiveAccounts;
       poolAny.markUsed = originals.markUsed;

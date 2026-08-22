@@ -35,7 +35,6 @@ const QUOTA_ERROR_PATTERNS = [
 ];
 
 const AGENT_MODE_ERROR_PATTERNS = [
-  "input_validation_error: forbidden",
   "ai_user_agent_mode",
   "ai user agent mode",
   "user agent mode",
@@ -54,8 +53,7 @@ export function isPostmanQuotaExceeded(value: unknown): boolean {
 export function isPostmanAgentModeUnavailable(value: unknown): boolean {
   const text = typeof value === "string" ? value : safeStringify(value);
   const normalized = text.toLowerCase();
-  return AGENT_MODE_ERROR_PATTERNS.some((pattern) => normalized.includes(pattern))
-    || (normalized.includes("input_validation_error") && normalized.includes("forbidden"));
+  return AGENT_MODE_ERROR_PATTERNS.some((pattern) => normalized.includes(pattern));
 }
 
 export class PostmanStreamReader {
@@ -67,9 +65,14 @@ export class PostmanStreamReader {
   private _retryableError = false;
   private _model: string | null = null;
   private _conversationId: string | null = null;
+  private _toolCallGroupId: string | null = null;
   private _sawEvent = false;
   private _sawToolCall = false;
+  private _loopApproval: { message: string; reasons: unknown; counters: unknown; thresholds: unknown } | null = null;
   private _toolCallIndex = new Map<string, number>();
+  private _generatedToolIds = new Map<number, string>();
+  private _namedToolIndexes = new Set<number>();
+  private _nextToolCallIndex = 0;
 
   get quotaExceeded(): boolean { return this._quotaExceeded; }
   get usage(): PostmanUsage | null { return this._usage; }
@@ -78,7 +81,10 @@ export class PostmanStreamReader {
   get retryableError(): boolean { return this._retryableError; }
   get actualModel(): string | null { return this._model; }
   get conversationId(): string | null { return this._conversationId; }
+  get toolCallGroupId(): string | null { return this._toolCallGroupId; }
   get sawEvent(): boolean { return this._sawEvent; }
+  get sawToolCall(): boolean { return this._sawToolCall; }
+  get loopApproval() { return this._loopApproval; }
 
   feed(line: string): PostmanDelta[] {
     const trimmed = line.trim();
@@ -96,6 +102,7 @@ export class PostmanStreamReader {
     this._sawEvent = true;
 
     const eventType = String(event.eventType || event.type || "");
+    this.captureConversationId(event, eventType);
     if (!eventType && typeof event.result === "string") {
       if (/fail|error/i.test(event.result)) return this.handleFailure(event);
       if (typeof event.message === "string" && event.message.length > 0) return [{ content: event.message }];
@@ -119,8 +126,11 @@ export class PostmanStreamReader {
         return this.handleFailure(event.data ?? event.error ?? event);
       case "toolCallChunk":
         return this.handleToolCallChunk(event.data);
+      case "loopApprovalChunk":
+        return this.handleLoopApproval(event.data);
       case "info":
       case "ping":
+      case "todoChunk":
       case "streamingFormat":
       case "thinkingComplete":
         return [];
@@ -138,8 +148,20 @@ export class PostmanStreamReader {
     return [{ finish_reason: this._sawToolCall ? "tool_calls" : "stop" }];
   }
 
-  private handleUsage(data: any): PostmanDelta[] {
-    if (!data) return [];
+  // Postman's agent-mode loop guard. Upstream stops generating and asks the
+  // client to approve continuing; without this the turn looks like an empty
+  // response.
+  private handleLoopApproval(data: any): PostmanDelta[] {
+    this._loopApproval = {
+      message: typeof data?.message === "string" ? data.message : "",
+      reasons: data?.reasons ?? null,
+      counters: data?.counters ?? null,
+      thresholds: data?.thresholds ?? null,
+    };
+    return [];
+  }
+
+  private handleUsage(data: any): PostmanDelta[] {    if (!data) return [];
     this._usage = {
       limit: data.limit ?? 0,
       usage: data.usage ?? 0,
@@ -182,6 +204,32 @@ export class PostmanStreamReader {
     return [];
   }
 
+  private captureConversationId(event: any, eventType: string): void {
+    const data = event?.data;
+    const candidates = eventType === "conversation"
+      ? [
+        data?.id,
+        data?.conversationId,
+        data?.conversation_id,
+        data?.conversation?.id,
+        data?.conversation?.conversationId,
+      ]
+      : [
+        event?.conversationId,
+        event?.conversation_id,
+        event?.metadata?.conversationId,
+        event?.metadata?.conversation_id,
+        data?.conversationId,
+        data?.conversation_id,
+        data?.conversation?.id,
+        data?.conversation?.conversationId,
+        data?.metadata?.conversationId,
+        data?.metadata?.conversation_id,
+      ];
+    const conversationId = firstNonEmptyString(...candidates);
+    if (conversationId) this._conversationId = conversationId;
+  }
+
   private handleTextChunk(data: any): PostmanDelta[] {
     if (!data) return [];
     if (data.metadata?.model) this._model = data.metadata.model;
@@ -203,33 +251,88 @@ export class PostmanStreamReader {
   }
 
   private handleToolCallChunk(data: any): PostmanDelta[] {
-    if (!data?.toolCalls || !Array.isArray(data.toolCalls)) return [];
+    const toolCalls = extractToolCallEntries(data);
+    if (toolCalls.length === 0) return [];
     if (data.metadata?.model) this._model = data.metadata.model;
+    this._toolCallGroupId ||= firstNonEmptyString(
+      data.toolCallGroupId,
+      data.tool_call_group_id,
+      data.groupId,
+      data.group_id,
+    ) || null;
 
     const out: PostmanDelta[] = [];
-    for (const tc of data.toolCalls) {
-      if (!tc.id) continue;
+    for (const [position, tc] of toolCalls.entries()) {
       this._sawToolCall = true;
+      this._toolCallGroupId ||= firstNonEmptyString(
+        tc.toolCallGroupId,
+        tc.tool_call_group_id,
+        tc.groupId,
+        tc.group_id,
+      ) || null;
 
-      let idx = this._toolCallIndex.get(tc.id);
-      const isFirst = idx === undefined;
-      if (isFirst) {
-        idx = this._toolCallIndex.size;
-        this._toolCallIndex.set(tc.id, idx);
+      const explicitIndex = firstFiniteInteger(tc.index, tc.toolCallIndex);
+      const suppliedId = firstNonEmptyString(
+        tc.id,
+        tc.call_id,
+        tc.callId,
+        tc.tool_call_id,
+        tc.toolCallId,
+      );
+      const positionKey = "position:" + position;
+      const idKey = suppliedId ? "id:" + suppliedId : undefined;
+      const sourceKey = explicitIndex === undefined
+        ? idKey || positionKey
+        : "index:" + explicitIndex;
+
+      let idx = this._toolCallIndex.get(sourceKey);
+      if (idx === undefined && explicitIndex === undefined && suppliedId) {
+        idx = this._toolCallIndex.get(positionKey);
       }
+      const isFirst = idx === undefined;
+      const toolCallIndex = idx === undefined ? this._nextToolCallIndex++ : idx;
+      if (isFirst) this._toolCallIndex.set(sourceKey, toolCallIndex);
+      this._toolCallIndex.set(positionKey, toolCallIndex);
+      if (idKey) this._toolCallIndex.set(idKey, toolCallIndex);
+
+      const stableId = suppliedId || this.getGeneratedToolId(toolCallIndex);
+      const name = firstNonEmptyString(
+        tc.function?.name,
+        tc.name,
+        tc.tool?.name,
+      );
+      const argumentsText = stringifyToolArguments(
+        tc.function?.arguments
+        ?? tc.arguments
+        ?? tc.input
+        ?? tc.input_json,
+      );
+
+      // Upstream repeats the full name on every chunk. Emitting it more than once
+      // makes clients that concatenate deltas build "get_weatherget_weather".
+      const emitName = name !== undefined && !this._namedToolIndexes.has(toolCallIndex);
+      if (emitName) this._namedToolIndexes.add(toolCallIndex);
 
       out.push({
         tool_calls: [{
-          index: idx!,
-          ...(isFirst ? { id: tc.id, type: "function" as const } : {}),
+          index: toolCallIndex,
+          ...(isFirst ? { id: stableId, type: "function" as const } : {}),
           function: {
-            ...(isFirst ? { name: tc.function?.name || "" } : {}),
-            arguments: tc.function?.arguments || "",
+            ...(emitName ? { name } : {}),
+            ...(argumentsText ? { arguments: argumentsText } : {}),
           },
         }],
       });
     }
     return out;
+  }
+
+  private getGeneratedToolId(index: number): string {
+    const existing = this._generatedToolIds.get(index);
+    if (existing) return existing;
+    const generated = "call_postman_" + index + "_" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    this._generatedToolIds.set(index, generated);
+    return generated;
   }
 
   private handleFailure(data: any): PostmanDelta[] {
@@ -256,6 +359,43 @@ function firstFiniteNumber(...values: unknown[]): number | undefined {
     if (Number.isFinite(number) && number >= 0) return number;
   }
   return undefined;
+}
+
+function extractToolCallEntries(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  for (const key of ["toolCalls", "tool_calls", "calls"]) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+  if (data?.toolCall && typeof data.toolCall === "object") return [data.toolCall];
+  if (data?.tool_call && typeof data.tool_call === "object") return [data.tool_call];
+  return [];
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const normalized = value.trim();
+    if (normalized) return normalized;
+  }
+  return undefined;
+}
+
+function firstFiniteInteger(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  }
+  return undefined;
+}
+
+function stringifyToolArguments(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) || "";
+  } catch {
+    return String(value);
+  }
 }
 
 function extractFailureMessage(value: unknown): string {

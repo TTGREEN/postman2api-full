@@ -92,6 +92,12 @@ export async function routeRequest(
         throw new Error("Client disconnected");
       }
 
+      // A tool/schema rejection is deterministic for this request payload. Do
+      // not treat it as an account failure or retry it on another account.
+      if (result.requestRejected) {
+        return { result, account, durationMs, leaseId };
+      }
+
       if (result.rateLimited) {
         pool.releaseSession(request._sessionId, account.id);
         excludedAccountIds.add(account.id);

@@ -22,7 +22,14 @@ const quotaSafeStreamBufferBytes = positiveNumber(
 );
 const streamKeepaliveIntervalMs = positiveNumber(process.env.STREAM_KEEPALIVE_INTERVAL_MS, 10_000);
 const postmanFetchVerbose = /^(1|true|yes)$/i.test(process.env.POSTMAN_FETCH_VERBOSE || "");
-const postmanOfficialMcpEnabled = /^(1|true|yes)$/i.test(process.env.POSTMAN_OFFICIAL_MCP_ENABLED || "");
+// Postman caps a single request at ~10k chars per field, so a long history has to
+// be streamed into the conversation across several priming turns instead of being
+// silently truncated. Each turn is a real upstream generation.
+const postmanContextPriming = !/^(0|false|no|off)$/i.test(process.env.POSTMAN_CONTEXT_PRIMING || "");
+const postmanContextPrimingMaxSegments = positiveNumber(
+  process.env.POSTMAN_CONTEXT_PRIMING_MAX_SEGMENTS,
+  40,
+);
 
 export const config = {
   host: process.env.HOST || "127.0.0.1",
@@ -36,7 +43,8 @@ export const config = {
   quotaSafeStreamBufferBytes,
   streamKeepaliveIntervalMs,
   postmanFetchVerbose,
-  postmanOfficialMcpEnabled,
+  postmanContextPriming,
+  postmanContextPrimingMaxSegments,
   loginBrowserBackend: parseLoginBrowserBackend(process.env.LOGIN_BROWSER_BACKEND),
   // Bun.serve expects seconds and supports at most 255. Prefer the longer
   // provider/stream timeout, capped to Bun's supported range.

@@ -32,4 +32,4 @@ bun run ci:check
 
 ## MCP / 工具调用改动
 
-默认保持 `POSTMAN_OFFICIAL_MCP_ENABLED=false`。只有确认 Postman 官方界面已配置 MCP 服务时，才应启用并测试工具元数据转发。
+工具转发不依赖 Postman 官方界面配置 MCP Server。只要请求带有客户端 `tools`，端口就会转换并测试 `clientTools.thirdParty`；纯聊天请求仍应保持无工具元数据。

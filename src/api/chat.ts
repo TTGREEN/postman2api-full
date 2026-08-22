@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { config } from "../config";
 import { handleChatCompletion } from "../proxy/index";
 import {
   anthropicToOpenAI,
@@ -11,12 +12,31 @@ import { resolveClientSessionId } from "./client-session";
 export const chatRouter = new Hono();
 
 chatRouter.post("/v1/chat/completions", async (c) => {
+  const traceId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
+  const trace = (stage: string, details: Record<string, unknown> = {}) => {
+    if (!config.postmanFetchVerbose) return;
+    console.error("[proxy] request-stage", {
+      traceId,
+      stage,
+      elapsedMs: Date.now() - startedAt,
+      ...details,
+    });
+  };
+  trace("received");
+
   let body: any;
   try {
     body = await c.req.json();
   } catch {
+    trace("body-parse-failed");
     return c.json({ error: { message: "Invalid JSON body", type: "invalid_request" } }, 400);
   }
+  trace("body-parsed", {
+    model: typeof body?.model === "string" ? body.model : null,
+    stream: body?.stream === true,
+    toolCount: Array.isArray(body?.tools) ? body.tools.length : 0,
+  });
 
   if (!body.model) {
     return c.json({ error: { message: "Missing 'model' field", type: "invalid_request" } }, 400);
@@ -26,8 +46,13 @@ chatRouter.post("/v1/chat/completions", async (c) => {
   }
 
   body._sessionId = resolveClientSessionId(c.req.raw.headers, body, "openai");
+  trace("session-resolved", {
+    hasSessionId: Boolean(body._sessionId),
+    messageCount: Array.isArray(body.messages) ? body.messages.length : 0,
+  });
   const signal = c.req.raw.signal;
   const response = await handleChatCompletion(body, signal);
+  trace("response-ready", { status: response.status });
 
   const headers = new Headers();
   response.headers.forEach((v, k) => headers.set(k, v));
@@ -35,17 +60,40 @@ chatRouter.post("/v1/chat/completions", async (c) => {
 });
 
 chatRouter.post("/v1/messages", async (c) => {
+  const traceId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
+  const trace = (stage: string, details: Record<string, unknown> = {}) => {
+    if (!config.postmanFetchVerbose) return;
+    console.error("[proxy] request-stage", {
+      traceId,
+      endpoint: "/v1/messages",
+      stage,
+      elapsedMs: Date.now() - startedAt,
+      ...details,
+    });
+  };
+  trace("received");
+
   let body: AnthropicMessagesRequest;
   try {
     body = await c.req.json<AnthropicMessagesRequest>();
   } catch {
+    trace("body-parse-failed");
     return c.json({ type: "error", error: { type: "invalid_request_error", message: "Invalid JSON body" } }, 400);
   }
+  trace("body-parsed", {
+    model: typeof body?.model === "string" ? body.model : null,
+    stream: body?.stream === true,
+    toolCount: Array.isArray((body as any)?.tools) ? (body as any).tools.length : 0,
+    messageCount: Array.isArray(body?.messages) ? body.messages.length : 0,
+  });
 
   if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+    trace("validation-failed", { reason: "messages" });
     return c.json({ type: "error", error: { type: "invalid_request_error", message: "messages is required" } }, 400);
   }
   if (!body.model) {
+    trace("validation-failed", { reason: "model" });
     return c.json({ type: "error", error: { type: "invalid_request_error", message: "model is required" } }, 400);
   }
 
@@ -55,10 +103,12 @@ chatRouter.post("/v1/messages", async (c) => {
   const openAIRequest = anthropicToOpenAI(body);
   openAIRequest._originalModel = originalModel;
   openAIRequest._sessionId = resolveClientSessionId(c.req.raw.headers, body, "anthropic");
+  trace("session-resolved", { hasSessionId: Boolean(openAIRequest._sessionId) });
   const signal = c.req.raw.signal;
 
   try {
     const response = await handleChatCompletion(openAIRequest, signal);
+    trace("response-ready", { status: response.status });
 
     if (!response.ok) {
       const message = await readErrorMessage(response);

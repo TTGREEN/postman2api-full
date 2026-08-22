@@ -45,34 +45,41 @@ Postman 官方提供远程 MCP 端点，按工具范围分为：
 
 也可以使用本地 npm 包方式运行 Postman MCP Server，并通过 Postman API key 鉴权。
 
-### 方式 B：让本项目向 Postman Agent Mode 转发工具元数据
+### 方式 B：通过本项目端口向 Postman Agent Mode 转发工具
 
-本项目支持把 OpenAI / Anthropic 请求中的 `tools` 转换成 Postman Agent Mode payload 的 `clientTools.thirdParty`。该路径默认关闭：
+如果你要把本项目封装成统一端口，让 Codex / Claude Code / 自研客户端只调用 `http://127.0.0.1:1930/v1/*`，请求里的 `tools` 会自动转换成 Postman Agent Mode payload 的 `clientTools.thirdParty`，并在上游返回工具调用后，把客户端回传的 `tool` / `tool_result` 结果绑定回同一个 Postman conversation。
 
-```env
-POSTMAN_OFFICIAL_MCP_ENABLED=false
-```
+这条路径不要求在 Postman 官方界面配置 MCP Server；只需要对应账号的 Agent Mode 可用。
 
-只有满足以下条件才开启：
+本项目的直接端口模式不要求额外配置 Postman 官方 MCP Server；请求里的工具
+schema 会作为 `proxy-tools` 转发。只有当你要使用 Postman 官方 MCP Server
+本身管理 workspace 资源时，才需要按方式 A 单独配置它。
 
-1. 你已经在 Postman 官方界面为对应 workspace / account 配好 MCP 或工具服务。
-2. 你确认该账号的 Agent Mode 可用。
-3. 客户端请求确实需要 `tools`。
+本项目会使用 Postman Agent Mode 的官方工具 payload 形态发送：`clientTools.nativeToolsHash` / `excludedTools` / `clientKBTerms.nativeTermsHash` / `excludedKBTerms` / `clientTools.thirdParty["proxy-tools"]`。服务会优先从当前 Postman Web 页面及其全部 JS chunk 中发现最新 `clienttools`、`kbterms` hash 和 `x-app-version` 并缓存；发现失败才使用随版本更新的内置值。当前内置版本为 `12.24.3-260819-0605`。如部署环境无法访问 Postman Web，也可以显式设置 `POSTMAN_NATIVE_TOOLS_HASH`、`POSTMAN_NATIVE_TERMS_HASH`，必要时再设置 `POSTMAN_APP_VERSION`。同时兼容以下入口形态，并统一转成 Postman 的 `proxy-tools`：
 
-开启：
+- OpenAI Chat Completions：`{ type: "function", function: { name, description, parameters } }`
+- Anthropic / custom：`{ type: "custom", name, input_schema }`
+- MCP `tools/list`：`{ name, description, inputSchema }`
+- namespace 工具：`{ type: "namespace", name, tools: [...] }`，客户端侧仍识别为 `namespace.toolName`；发给 Postman 前会安全化为 `namespace_toolName`，上游返回 tool call 时再映射回客户端原名。
 
-```env
-POSTMAN_OFFICIAL_MCP_ENABLED=true
-```
-
-开启后，本项目会把客户端传入的 OpenAI function tools 映射到 Postman Agent Mode 的第三方工具描述；它不会替你启动本地 MCP Server，也不会保存 MCP API key。
+注意：本项目负责“端口协议转换 + 上游转发 + tool result 续写”，不负责保存 MCP API key，也不直接启动本地 MCP Server。真实工具运行时仍由调用客户端或其工具运行时负责；本项目只转发工具 schema、上游 tool call，并把客户端回传的 result 绑定到同一 Postman conversation。带工具且未显式设置 `tool_choice: none` 时，`autoRun` 为 `true`，让 Agent Mode 进入工具调用/续接路径；纯聊天或显式禁用工具时为 `false`。
 
 ## 排错
 
-- `Agent Mode is not enabled`：先对账号执行测试或 warmup，确认 `ai_user_agent_mode` 已启用。
-- `INPUT_VALIDATION_ERROR: Forbidden`：通常是 Agent Mode / 工具元数据 / 上游字段不匹配，先关闭 `POSTMAN_OFFICIAL_MCP_ENABLED` 验证纯聊天。
-- 工具没有执行：确认工具执行端在 Postman 官方 MCP 配置或外部 MCP 客户端中存在；本项目只转发工具 schema，不代替外部工具运行时。
+- `Agent Mode setting failed (404)`：该 Postman 环境没有暴露本地尝试调用的设置接口；服务不会再因此拦截聊天，会继续发送真实聊天请求，让上游聊天接口返回权威结果。
+- `Agent Mode is not enabled`：服务会自动清理本地开关缓存、重新启用 `ai_user_agent_mode` 并重试一次；若仍出现，说明该账号/团队的 Postman Agent Mode 或组织 AI 权限仍未真正可用。
+- `INPUT_VALIDATION_ERROR: Forbidden`：MCP/tools 场景会自动做最小诊断探针，并在错误后追加 `MCP diagnostic`：
+  - `pure_chat=fail`：不带工具的纯聊天也失败，优先查账号 Agent Mode、团队 AI 权限、额度或通用上游访问。
+  - `pure_chat=pass, noop_tool=fail`：纯聊天可用，但一个最小 `noop` 第三方工具也被拒绝，问题定位在 Postman 上游 MCP/第三方工具转发权限或校验。
+  - `pure_chat=pass, noop_tool=pass`：最小工具可用，问题定位在客户端原始工具名、schema 或工具数量 payload。
+  - `metadata=bundled`：本次请求使用内置 hash；`metadata=discovered`：已从当前 Postman 页面/JS chunk 发现 hash；`metadata=configured`：使用了显式环境变量覆盖。
+  - 所有工具在首次发送前都会被收敛为 Postman 可接受的 object schema：根和嵌套 object 强制 `additionalProperties=false`，移除 `$ref`、`$defs`、`anyOf` / `oneOf` 等复杂结构，并过滤无效 `required` 字段。这样诊断针对的就是实际发送的 payload，不会再重复发送同一个被拒绝的 schema。
+  - 诊断探针使用独立的短超时，不复用已断开的客户端请求信号，避免把真实的 `Forbidden` 覆盖成 `Client disconnected`。
+- 工具没有执行：确认请求确实带有 `tools`，并确认工具运行时在客户端或 Postman Agent Mode 可访问环境中存在；本项目负责把 schema 和 tool result 通过端口转发，不凭空提供工具实现。
+- tool result 后无法继续：优先确认客户端复用了同一个 `x-session-id`，并检查
+  `tool_call_id` 是否来自上一轮响应。没有会话头时，服务也会按工具调用 ID 做
+  一次短时续接，但多账号负载均衡或多轮工具链仍应使用稳定会话。
 
 ## 当前建议
 
-生产默认保持 `POSTMAN_OFFICIAL_MCP_ENABLED=false`。先保证纯聊天稳定，再逐步测试 MCP / tools。
+生产中纯聊天请求仍不携带第三方工具列表；带 `tools` 的请求会自动进入端口工具转发路径。
